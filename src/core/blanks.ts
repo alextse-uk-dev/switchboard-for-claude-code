@@ -23,13 +23,19 @@ export interface Blank {
 // Words that start a choice the user answers in their own words.
 const OPEN_START = /^(what|which|how|why|who|where|when|describe|explain|list|name|say|type|your|any|anything|other)\b/i;
 
+// The one-word slots that can only mean the user's answer, as in "My answers: <paste>."
+const ANSWER_WORD = /^(paste|answers?|reply|verdict|feedback|choice|decision|notes|comments)$/i;
+
 function isBlankText(t: string): boolean {
   if (t.length < 2 || t.length > 200) return false;
   if (/^\s|\s$/.test(t)) return false; // "a < b and c > d" is not a slot
-  if (/[<>\n="`]/.test(t)) return false; // nor is an HTML tag
+  // Nor is an HTML tag such as <a href="x">. Quotes alone don't make a tag:
+  // <which answers did "Copy my answers" give> is a slot.
+  if (/[<>\n=`]/.test(t)) return false;
   // A slot has words in it ("your verdict"), or is a list of choices ("yes/no").
-  // A single word, such as `<id>` in a command, is the command's own placeholder.
-  return /\s/.test(t) || /^[A-Za-z'-]+(\/[A-Za-z'-]+)+$/.test(t);
+  // A single word, such as `<id>` in a command, is the command's own placeholder,
+  // unless it can only be an answer ("<paste>").
+  return /\s/.test(t) || /^[A-Za-z'-]+(\/[A-Za-z'-]+)+$/.test(t) || ANSWER_WORD.test(t);
 }
 
 function choicesOf(t: string): Choice[] {

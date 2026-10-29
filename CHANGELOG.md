@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+- **Start next session** now asks for every slot a kickoff prompt leaves for your answer. Two kinds were missed, so the prompt went out with the slot still in it:
+  - A slot that quotes a button or a label, e.g. `<which answers did "Copy my answers" give>`.
+  - A one-word slot that can only be your answer: `<paste>`, `<answer>`, `<answers>`, `<reply>`, `<verdict>`, `<feedback>`, `<choice>`, `<decision>`, `<notes>` or `<comments>`.
+
+  Other one-word placeholders, such as `<id>`, and anything in backticks are still left alone.
+
 ## 0.6.0
 
 - **Phone push.** When a session needs you or finishes a turn while you are away, a push goes to the free ntfy app on your phone. Run **Switchboard: Set Up Phone Push**: it makes a private topic on ntfy.sh to subscribe to (or takes your own topic URL and access token), then sends a test push. The topic is kept in VS Code's secret storage, never in settings.

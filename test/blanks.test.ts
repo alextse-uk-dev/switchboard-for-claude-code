@@ -35,6 +35,18 @@ test('findBlanks: a lone description or a yes/no list is a slot too', () => {
   assert.equal(findBlanks('<A / B / describe the bug…>')[0].choices[2].open, true);
 });
 
+test('findBlanks: a slot may quote a button, and a one-word answer slot counts', () => {
+  const quoted = 'My answers from the page: <which answers did "Copy my answers" give>. Turn the first into a plan.';
+  const [q] = findBlanks(quoted);
+  assert.equal(q.text, 'which answers did "Copy my answers" give');
+  assert.deepEqual(q.choices, [{ label: 'which answers did "Copy my answers" give', open: true }]);
+  assert.equal(fillBlanks(quoted, [q], ['Q1 A, Q2 B']), 'My answers from the page: Q1 A, Q2 B. Turn the first into a plan.');
+  assert.equal(findBlanks('Curly too: <what did “Copy” give>.').length, 1);
+  assert.deepEqual(findBlanks('Answers from the page: <paste>. Then <Answers>.').map((b) => b.text), ['paste', 'Answers']);
+  assert.deepEqual(findBlanks('See <a href="x">here</a>, <img alt="y">.'), [], 'a tag with attributes is still a tag');
+  assert.deepEqual(findBlanks('Release note: `## v1 (<date>)`, then <id> and <paste-id>.'), [], 'code and command placeholders are not');
+});
+
 test('fillBlanks puts each answer in its place, and leaves an unanswered slot', () => {
   const b = findBlanks(PROMPT);
   assert.equal(fillBlanks(PROMPT, b, ['looks fine']), PROMPT.replace("<looks fine / what's wrong>", 'looks fine'));
