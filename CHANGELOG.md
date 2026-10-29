@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- **Mac alerts** (macOS, off by default: `switchboard.macAlert.enabled`). When a session needs you or finishes a turn of 60 seconds or more, a notification banner shows, for when the VS Code pop-up can't reach you: another app is in front, or you have left the desk.
+  - While you are at the Mac, there is no banner for what VS Code already shows you: the tab you're looking at, or an event this window, in front, pops up for.
+  - Once you have been away 60 seconds (`switchboard.macAlert.awaySeconds`), the banner always shows and a sound plays (`switchboard.macAlert.sound`: Glass by default, any macOS sound, or none).
+  - Only one window alerts for each event. Turn kinds off with `switchboard.macAlert.needsYou` and `switchboard.macAlert.finished`; finished turns under 60 seconds are skipped (`switchboard.macAlert.finishedMinSeconds`). **Switchboard: Send a Test Mac Alert** shows one.
+  - Each window's file in the shared storage folder says `"macAlerts": true` while it gives the whole set (both kinds, with a sound), so another tool that plays its own sounds can stay quiet meanwhile.
+- With no status time from Claude Code, two windows could each claim the same pop-up or push, since each named it by its own clock. They now name it by the minute.
+- A closing window's file in the shared folder is removed after any write still queued, so it can't come back.
+
 ## 0.6.1
 
 - **Start next session** now asks for every slot a kickoff prompt leaves for your answer. Two kinds were missed, so the prompt went out with the slot still in it:

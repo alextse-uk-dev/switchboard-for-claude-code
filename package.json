@@ -1,8 +1,8 @@
 {
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
-  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a push on your phone when one needs you while you are away.",
-  "version": "0.6.1",
+  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a Mac alert, or a push on your phone, when one needs you while you are away.",
+  "version": "0.7.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -119,6 +119,11 @@
         "command": "switchboard.phonePush.off",
         "title": "Turn Off Phone Push",
         "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.macAlert.test",
+        "title": "Send a Test Mac Alert",
+        "category": "Switchboard"
       }
     ],
     "menus": {
@@ -212,6 +217,61 @@
           "type": "boolean",
           "default": false,
           "description": "Quote Claude's question or error in the push. Off, a push says only the session's title, its folder and what happened, because pushes pass through the ntfy server."
+        },
+        "switchboard.macAlert.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "macOS only. Show a notification banner when a session needs you or finishes a turn, unless VS Code already shows it to you (you are looking at its tab, or this window is in front with its pop-up). Once you have been away (see Away Seconds), the banner always shows and the sound plays too. Run \"Switchboard: Send a Test Mac Alert\" to check that banners reach you. Set for all windows at once (user settings only).",
+          "scope": "application"
+        },
+        "switchboard.macAlert.needsYou": {
+          "type": "boolean",
+          "default": true,
+          "description": "Give a Mac alert when a session starts waiting for you (a permission prompt or a question).",
+          "scope": "application"
+        },
+        "switchboard.macAlert.finished": {
+          "type": "boolean",
+          "default": true,
+          "description": "Give a Mac alert when a session finishes a turn: done, waiting for your reply, handing over, or stopped on an error.",
+          "scope": "application"
+        },
+        "switchboard.macAlert.finishedMinSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "Only give Mac alerts for finished turns that ran at least this many seconds.",
+          "scope": "application"
+        },
+        "switchboard.macAlert.sound": {
+          "type": "string",
+          "enum": [
+            "none",
+            "Basso",
+            "Blow",
+            "Bottle",
+            "Frog",
+            "Funk",
+            "Glass",
+            "Hero",
+            "Morse",
+            "Ping",
+            "Pop",
+            "Purr",
+            "Sosumi",
+            "Submarine",
+            "Tink"
+          ],
+          "default": "Glass",
+          "description": "The sound a Mac alert plays while you are away. \"none\" plays nothing.",
+          "scope": "application"
+        },
+        "switchboard.macAlert.awaySeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "No key press or mouse move for this many seconds and you count as away: a Mac alert then plays its sound, and shows even for the tab in front of you. 0 plays the sound with every alert (the banner still skips what VS Code already shows you).",
+          "scope": "application"
         },
         "switchboard.newSessionTokens": {
           "type": "number",

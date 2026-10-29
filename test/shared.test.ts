@@ -88,3 +88,28 @@ test('a released claim can be claimed again', async () => {
   await a.release('push-needs-1:x-100');
   assert.equal(await a.claim('push-needs-1:x-100'), true);
 });
+
+test("a window's file says whether it gives Mac alerts, for other tools to read", async () => {
+  const dir = await tempDir();
+  const a = new SharedState(dir, 'a');
+  await a.init(0);
+  const read = async () => JSON.parse(await fs.readFile(path.join(dir, 'windows', 'a.json'), 'utf8')) as { pid: number; macAlerts: boolean };
+  await a.publishOwned([]);
+  assert.equal((await read()).macAlerts, false);
+  await a.noteMacAlerts(true);
+  assert.deepEqual(await read(), { v: 1, pid: process.pid, sessions: [], focusedAt: 0, blurredAt: 0, macAlerts: true });
+  await a.noteMacAlerts(false);
+  assert.equal((await read()).macAlerts, false);
+});
+
+test("a closed window's file stays gone, even with a write still queued", async () => {
+  const dir = await tempDir();
+  const a = new SharedState(dir, 'a');
+  await a.init(0);
+  await a.noteMacAlerts(true);
+  const queued = a.noteBlurred(900);
+  const closed = a.dispose();
+  const late = a.publishOwned(['1:x']);
+  await Promise.all([queued, closed, late]);
+  await assert.rejects(fs.access(path.join(dir, 'windows', 'a.json')));
+});

@@ -3,7 +3,9 @@ import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { showBanner, playSound } from './alert';
 import { BoardView, type FromBoard, type TodoView } from './board';
+import { alertPlan, alertText, givesAllAlerts, soundFile } from './core/alert';
 import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks';
 import { toCard, type Card, type Where } from './core/card';
 import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, type Defaults } from './core/launch';
@@ -142,6 +144,26 @@ const keyArg = (arg: unknown): string | undefined => (typeof arg === 'string' ? 
 
 const config = () => vscode.workspace.getConfiguration('switchboard');
 
+/** Mac alerts are turned on, and this is a Mac. */
+const macAlertsOn = () => process.platform === 'darwin' && config().get<boolean>('macAlert.enabled', false);
+
+/** This window gives every kind of Mac alert, with a sound: what its file tells other tools. */
+const allMacAlerts = () =>
+  macAlertsOn() &&
+  givesAllAlerts({
+    enabled: true,
+    needsYou: config().get<boolean>('macAlert.needsYou', true),
+    finished: config().get<boolean>('macAlert.finished', true),
+    sound: config().get<string>('macAlert.sound', 'Glass'),
+  });
+
+/**
+ * The moment a claim is named by. Claude Code's own status time is the same
+ * in every window; without one, each window's clock differs by a little, so
+ * the minute stands in, and two windows can't both claim one event.
+ */
+const claimAt = (s: Session, now: number) => s.statusUpdatedAt ?? `m${Math.floor(now / 60_000)}`;
+
 /** The context size from which a session is told to hand over (0: never). */
 const freshTokens = () => Math.max(0, config().get<number>('newSessionTokens', 150_000));
 
@@ -209,6 +231,7 @@ class Board implements vscode.Disposable {
     await this.safe(this.todos.load(), false);
     await this.push.load().catch((e) => this.log.warn(`Phone push: ${message(e)}`));
     if (vscode.window.state.focused) await this.safe(this.shared.noteFocused(Date.now()), undefined);
+    await this.safe(this.shared.noteMacAlerts(allMacAlerts()), undefined);
     const w = vscode.window;
     this.disposables.push(
       this.log,
@@ -226,6 +249,7 @@ class Board implements vscode.Disposable {
       vscode.commands.registerCommand('switchboard.phonePush.setup', () => this.setUpPush()),
       vscode.commands.registerCommand('switchboard.phonePush.test', () => this.testPush()),
       vscode.commands.registerCommand('switchboard.phonePush.off', () => this.pushOff()),
+      vscode.commands.registerCommand('switchboard.macAlert.test', () => this.testMacAlert()),
       // Another window set it up or turned it off.
       this.ctx.secrets.onDidChange((e) => {
         if (e.key === PushStore.KEY) void this.push.load().then(() => this.render(), (err) => this.log.warn(`Phone push: ${message(err)}`));
@@ -247,6 +271,7 @@ class Board implements vscode.Disposable {
       this.board.onDidShow(() => this.schedule()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('switchboard.claudePath')) this.claude = undefined;
+        if (e.affectsConfiguration('switchboard.macAlert')) void this.safe(this.shared.noteMacAlerts(allMacAlerts()), undefined);
         if (e.affectsConfiguration('switchboard')) this.render();
         if (e.affectsConfiguration('switchboard.newSessionTokens') || e.affectsConfiguration('switchboard.showCost')) this.schedule();
         // A new default width applies at once if the board is in view.
@@ -355,6 +380,7 @@ class Board implements vscode.Disposable {
     for (const e of events) {
       void this.maybePop(e, looking);
       void this.maybePush(e, looking);
+      void this.maybeAlert(e, looking);
     }
     await this.countCosts(sessions);
   }
@@ -566,13 +592,11 @@ class Board implements vscode.Disposable {
     this.status.show();
   }
 
-  private async maybePop(e: SessionEvent, looking: Session | undefined): Promise<void> {
+  /** Whether this window shows a pop-up for an event (before any claim). */
+  private pops(e: SessionEvent, looking: Session | undefined): boolean {
     const cfg = config();
     const key = keyOf(e.session);
-    const row = this.rows.get(key);
-    // The user interrupted it themselves, so there is nothing to tell.
-    if (e.type === 'finished' && row?.outcome?.kind === 'stopped' && row.outcome.why === 'interrupted') return;
-    const pop = shouldPop(e, {
+    return shouldPop(e, {
       needsOn: cfg.get<boolean>('popups.needsYou', true),
       finishedOn: cfg.get<boolean>('popups.finished', true),
       finishedMinMs: cfg.get<number>('popups.finishedMinSeconds', 30) * 1000,
@@ -581,9 +605,15 @@ class Board implements vscode.Disposable {
       ownedElsewhere: this.peers.owned.has(key),
       lastFocused: this.shared.lastFocusedAt >= this.peers.focusedAt,
     });
-    if (!pop) return;
-    const changedAt = this.tracker.changedAt(key) ?? Date.now();
-    if (!(await this.safe(this.shared.claim(`${e.type}-${key}-${changedAt}`), true))) return;
+  }
+
+  private async maybePop(e: SessionEvent, looking: Session | undefined): Promise<void> {
+    const key = keyOf(e.session);
+    const row = this.rows.get(key);
+    // The user interrupted it themselves, so there is nothing to tell.
+    if (e.type === 'finished' && row?.outcome?.kind === 'stopped' && row.outcome.why === 'interrupted') return;
+    if (!this.pops(e, looking)) return;
+    if (!(await this.safe(this.shared.claim(`${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
     const text = popText(e, row?.title ?? e.session.name, e.type === 'finished' ? row?.outcome : undefined);
     const next = e.type === 'finished' && row?.group === 'handoff' ? ['Start next session'] : [];
     const warn = e.type === 'needs' || row?.group === 'stopped';
@@ -623,7 +653,7 @@ class Board implements vscode.Disposable {
     if (!(await this.push.get())) return;
     const key = keyOf(e.session);
     const changedAt = this.tracker.changedAt(key) ?? Date.now();
-    const claim = `push-${e.type}-${key}-${changedAt}`;
+    const claim = `push-${e.type}-${key}-${claimAt(e.session, Date.now())}`;
     const c = this.pushSettings();
     const decides = this.tabs.has(key) || (!this.peers.owned.has(key) && this.shared.lastFocusedAt >= this.peers.focusedAt);
     const verdict = pushVerdict(e, this.rows.get(key)?.outcome, {
@@ -635,6 +665,57 @@ class Board implements vscode.Disposable {
     const p: Pending = { e, key, sessionId: e.session.sessionId, changedAt, since: Date.now() };
     if (verdict === 'push') await this.sendFor(p, claim);
     else if (verdict === 'wait' && !c.always) this.hold(claim, p);
+  }
+
+  /**
+   * A macOS banner, and a sound once you have been away a while, for an
+   * event the VS Code pop-up can't bring to you. As for pushes, one window
+   * decides and a claim makes sure only one alerts.
+   */
+  private async maybeAlert(e: SessionEvent, looking: Session | undefined): Promise<void> {
+    if (!macAlertsOn()) return;
+    const cfg = config();
+    const key = keyOf(e.session);
+    const row = this.rows.get(key);
+    const lookingAt = looking !== undefined && keyOf(looking) === key;
+    const sound = soundFile(cfg.get<string>('macAlert.sound', 'Glass'));
+    const plan = alertPlan(e, row?.outcome, {
+      needsOn: cfg.get<boolean>('macAlert.needsYou', true),
+      finishedOn: cfg.get<boolean>('macAlert.finished', true),
+      finishedMinMs: Math.max(0, cfg.get<number>('macAlert.finishedMinSeconds', 60)) * 1000,
+      decides: this.tabs.has(key) || (!this.peers.owned.has(key) && this.shared.lastFocusedAt >= this.peers.focusedAt),
+      seenHere: lookingAt || (vscode.window.state.focused && this.pops(e, looking)),
+      idleMs: await systemIdleMs(),
+      awayAfterMs: Math.max(0, cfg.get<number>('macAlert.awaySeconds', 60)) * 1000,
+      soundOn: sound !== undefined,
+    });
+    if (!plan.banner && !plan.sound) return;
+    if (!(await this.safe(this.shared.claim(`alert-${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
+    const t = alertText(e, row?.title ?? e.session.name, path.basename(e.session.cwd) || e.session.cwd, row?.outcome);
+    await Promise.all([
+      plan.banner ? showBanner(t.title, t.message).catch((err) => this.log.warn(`Mac alert banner not shown: ${message(err)}.`)) : undefined,
+      plan.sound && sound ? playSound(sound).catch((err) => this.log.warn(`Mac alert sound not played: ${message(err)}.`)) : undefined,
+    ]);
+  }
+
+  private async testMacAlert(): Promise<void> {
+    if (process.platform !== 'darwin') {
+      void vscode.window.showInformationMessage('Mac alerts work on macOS only.');
+      return;
+    }
+    const sound = soundFile(config().get<string>('macAlert.sound', 'Glass'));
+    try {
+      await Promise.all([showBanner('Switchboard', 'A test alert. Sessions that need you, or finish, will show like this.'), sound ? playSound(sound) : undefined]);
+    } catch (err) {
+      void vscode.window.showWarningMessage(`The test alert failed: ${message(err)}`);
+      return;
+    }
+    const off = !macAlertsOn();
+    const pick = await vscode.window.showInformationMessage(
+      `Test alert sent${sound ? ', with its sound' : ''}. No banner? Allow notifications for Script Editor in System Settings > Notifications.${off ? ' Mac alerts are off: turn them on to get them for your sessions.' : ''}`,
+      ...(off ? ['Turn on Mac alerts'] : []),
+    );
+    if (pick === 'Turn on Mac alerts') await config().update('macAlert.enabled', true, vscode.ConfigurationTarget.Global);
   }
 
   private hold(claim: string, p: Pending): void {

@@ -41,6 +41,8 @@ export interface Peers {
  * one file each, so two windows never rewrite each other's marks), which
  * sessions each window holds and when it was last focused
  * (`windows/<id>.json`), and which pop-ups have been shown (`claims/`).
+ * A window file also says whether that window gives Mac alerts, so another
+ * tool that plays its own sounds can stay quiet while one does.
  */
 export class SharedState {
   readonly seenDir: string;
@@ -51,7 +53,10 @@ export class SharedState {
   private owned: string[] = [];
   private focusedAt = 0;
   private blurredAt = 0;
+  private macAlerts = false;
   private lastWritten = '';
+  /** Once the window closes, nothing more is written, so its file stays gone. */
+  private disposed = false;
   /** Writes from this window run one at a time. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -137,6 +142,12 @@ export class SharedState {
     return this.writeWindow();
   }
 
+  /** Tells the other windows, and other tools, whether this window gives the whole set of Mac alerts. */
+  noteMacAlerts(on: boolean): Promise<void> {
+    this.macAlerts = on;
+    return this.writeWindow();
+  }
+
   get lastBlurredAt(): number {
     return this.blurredAt;
   }
@@ -147,7 +158,8 @@ export class SharedState {
 
   private writeWindow(): Promise<void> {
     return this.serial(async () => {
-      const data = JSON.stringify({ v: 1, pid: process.pid, sessions: this.owned, focusedAt: this.focusedAt, blurredAt: this.blurredAt });
+      if (this.disposed) return;
+      const data = JSON.stringify({ v: 1, pid: process.pid, sessions: this.owned, focusedAt: this.focusedAt, blurredAt: this.blurredAt, macAlerts: this.macAlerts });
       if (data === this.lastWritten) return;
       await writeAtomic(this.ownFile, data);
       this.lastWritten = data;
@@ -205,7 +217,9 @@ export class SharedState {
     await fs.rm(path.join(this.claimsDir, event.replace(/[^A-Za-z0-9.-]/g, '_')), { force: true });
   }
 
-  async dispose(): Promise<void> {
-    await fs.rm(this.ownFile, { force: true });
+  /** Removes this window's file, after any write already queued. */
+  dispose(): Promise<void> {
+    this.disposed = true;
+    return this.serial(() => fs.rm(this.ownFile, { force: true }));
   }
 }
