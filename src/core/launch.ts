@@ -87,3 +87,34 @@ export function launchCommand(l: Launch): string {
   if (task) args.push(...(task.startsWith('-') ? ['--'] : []), shq(task));
   return args.join(' ');
 }
+
+export interface Summary {
+  name: string;
+  /** The folder as the user knows it, e.g. `~/code/shop`. */
+  where: string;
+  model?: string;
+  effort?: string;
+  task: string;
+  defaults: Defaults;
+  /** Where the first message comes from, e.g. "the kickoff prompt from …". */
+  firstFrom?: string;
+  /** A last line, e.g. "The old session stays open." */
+  after?: string;
+}
+
+/** The text of the box that confirms a new session: name, folder, model, effort and first message. */
+export function launchSummary(o: Summary): string {
+  const orDefault = (v: string | undefined, fallback: string | undefined, file?: string) =>
+    v ?? (fallback ? `default (${fallback}, from ${file ?? 'your Claude Code settings'})` : "Claude Code's default");
+  const task = o.task.trim();
+  const lines = [
+    `Name: ${o.name.trim() || 'none (Claude names it)'}`,
+    `Folder: ${o.where}`,
+    `Model: ${orDefault(o.model, o.defaults.model, o.defaults.from)}`,
+    `Effort: ${orDefault(o.effort, o.defaults.effort)}`,
+    '',
+    task ? `First message${o.firstFrom ? `, ${o.firstFrom}` : ''}:\n\n${task}` : 'First message: none (a blank prompt).',
+  ];
+  if (o.after) lines.push('', o.after);
+  return lines.join('\n');
+}

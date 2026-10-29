@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BoardView, type FromBoard, type TodoView } from './board';
 import { toCard, type Card, type Where } from './core/card';
-import { EFFORTS, isModelId, launchCommand, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
+import { EFFORTS, isModelId, launchCommand, launchSummary, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
@@ -30,6 +30,15 @@ const LAST_EFFORT_KEY = 'switchboard.lastEffort';
 interface ModelChoice {
   model?: string;
   effort?: string;
+  /** What the defaults were when the choice was made, for the summary. */
+  defaults?: Defaults;
+}
+
+/** Everything a new session starts with. */
+interface Launching extends ModelChoice {
+  name: string;
+  cwd: string;
+  task: string;
 }
 
 /** A quick pick that opens on the item `active` picks. Resolves undefined if dismissed. */
@@ -715,62 +724,62 @@ class Board implements vscode.Disposable {
   private async newSession(): Promise<void> {
     const asks = config().get<boolean>('newSession.chooseModel', true);
     const total = asks ? 5 : 3;
+    const step = (n: number) => `New Claude Code session (${n}/${total})`;
     const name = await vscode.window.showInputBox({
-      title: `New Claude Code session (1/${total})`,
+      title: step(1),
       prompt: 'A name for the session. It shows on the tab and in Switchboard. Leave empty to let Claude name it.',
       placeHolder: 'e.g. Fix the login redirect',
       ignoreFocusOut: true,
     });
     if (name === undefined) return;
-    const cwd = await this.pickFolder(`New Claude Code session (2/${total})`);
+    const cwd = await this.pickFolder(step(2));
     if (!cwd) return;
-    let choice: ModelChoice = {};
-    if (asks) {
-      const c = await this.chooseModel(cwd, (n) => `New Claude Code session (${2 + n}/${total})`);
-      if (!c) return;
-      choice = c;
-    }
     const task = await vscode.window.showInputBox({
-      title: `New Claude Code session (${total}/${total})`,
+      title: step(3),
       prompt: 'The first thing to ask Claude. Leave empty to start with a blank prompt.',
       placeHolder: 'e.g. Find why the login page redirects twice',
       ignoreFocusOut: true,
     });
     if (task === undefined) return;
-    await this.launch({ name, cwd, task, ...choice });
+    const choice = asks ? await this.chooseModel(cwd, (n) => step(3 + n)) : {};
+    if (!choice) return;
+    const l = { name, cwd, task, ...choice };
+    if (await this.confirmLaunch(l, 'Start this session?')) await this.launch(l);
   }
 
   /**
    * Starts the session that follows a hand-over: same folder, and the kickoff
-   * prompt as its first message. The model and effort are chosen first; the
-   * prompt comes from Claude's reply, so the user sees all of it before
-   * anything runs.
+   * prompt as its first message. The model and effort come last, then a
+   * summary to confirm; the prompt comes from Claude's reply, so the user
+   * sees all of it there before anything runs.
    */
   private async startNext(key: string | undefined): Promise<void> {
     const row = key ? this.rows.get(key) : undefined;
     if (!row) return;
     const prompt = row.outcome?.kind === 'handoff' ? row.outcome.prompt : undefined;
     const folder = path.basename(row.s.cwd);
-    let choice: ModelChoice = {};
-    if (config().get<boolean>('newSession.chooseModel', true)) {
-      const c = await this.chooseModel(row.s.cwd, (n) => `Start the next session in ${folder} (${n}/2)`);
-      if (!c) return;
-      choice = c;
-    }
-    const runs = `Model: ${choice.model ?? 'your default'} · Effort: ${choice.effort ?? 'your default'}.`;
-    const pick = await vscode.window.showInformationMessage(
-      `Start a new session in ${folder}?`,
-      {
-        modal: true,
-        detail: prompt
-          ? `${runs}\n\nIts first message will be the kickoff prompt from "${row.title}":\n\n${prompt}\n\nThe old session stays open.`
-          : `${runs}\n\nIt starts with a blank prompt. The old session stays open.`,
-      },
-      'Start',
-    );
-    if (pick !== 'Start') return;
+    const choice = config().get<boolean>('newSession.chooseModel', true)
+      ? await this.chooseModel(row.s.cwd, (n) => `Start the next session in ${folder} (${n}/2)`)
+      : {};
+    if (!choice) return;
+    const l = { name: row.title, cwd: row.s.cwd, task: prompt ?? '', ...choice };
+    const firstFrom = prompt ? `the kickoff prompt from "${row.title}"` : undefined;
+    if (!(await this.confirmLaunch(l, `Start the next session in ${folder}?`, firstFrom, 'The old session stays open.'))) return;
     await this.markSeen(key);
-    await this.launch({ name: row.title, cwd: row.s.cwd, task: prompt ?? '', ...choice });
+    await this.launch(l);
+  }
+
+  /**
+   * The last step before a session starts: everything it will start with,
+   * in one box. Resolves true only for Start.
+   */
+  private async confirmLaunch(l: Launching, question: string, firstFrom?: string, after?: string): Promise<boolean> {
+    const defaults = l.defaults ?? (await this.defaultsFor(l.cwd));
+    const home = os.homedir();
+    const where = l.cwd === home || l.cwd.startsWith(home + path.sep) ? `~${l.cwd.slice(home.length)}` : l.cwd;
+    const detail = launchSummary({ ...l, where, defaults, firstFrom, after });
+    const pick = await vscode.window.showInformationMessage(question, { modal: true, detail }, 'Start');
+    return pick === 'Start';
   }
 
   /**
@@ -815,7 +824,7 @@ class Board implements vscode.Disposable {
     if (!e) return undefined;
     await this.ctx.globalState.update(LAST_MODEL_KEY, model);
     await this.ctx.globalState.update(LAST_EFFORT_KEY, e.value ?? '');
-    return { model: model || undefined, effort: e.value || undefined };
+    return { model: model || undefined, effort: e.value || undefined, defaults: d };
   }
 
   /** The model and effort Claude Code would use in a folder: user settings, then the project's own. */
@@ -830,7 +839,7 @@ class Board implements vscode.Disposable {
   }
 
   /** Opens a tab running `claude -n <name> [--model …] [--effort …] <task>` in a folder. */
-  private async launch(l: { name: string; cwd: string; task: string } & ModelChoice): Promise<void> {
+  private async launch(l: Launching): Promise<void> {
     const claude = (await this.claudePath()) ?? 'claude';
     const command = launchCommand({ claude, name: l.name, model: l.model, effort: l.effort, task: l.task });
     // The user's shell takes over after claude exits, like a tab they opened.

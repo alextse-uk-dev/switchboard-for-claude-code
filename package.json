@@ -2,7 +2,7 @@
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
   "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -182,7 +182,7 @@
         "switchboard.newSession.chooseModel": {
           "type": "boolean",
           "default": true,
-          "description": "Ask for the model and the effort before starting a session (New session, and Start next session). Each list opens on your last choice; \"Default\" leaves it to your Claude Code settings."
+          "description": "Ask for the model and the effort, as the last two questions, before starting a session (New session, and Start next session). Each list opens on your last choice; \"Default\" leaves it to your Claude Code settings. A summary to confirm always comes last."
         },
         "switchboard.statusBar.enabled": {
           "type": "boolean",

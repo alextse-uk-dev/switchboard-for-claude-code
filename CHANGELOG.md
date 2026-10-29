@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- The model and the effort are now the last two questions, after the name, the folder and the first message.
+- A summary comes last, before anything starts: name, folder, model, effort (naming the defaults when you chose Default) and the whole first message. Nothing runs until you press Start.
+
 ## 0.3.0
 
 - Choose the model and the effort before a session starts, in **New session** and in **Start next session**. Each list opens on your last choice, and "Default" shows what your Claude Code settings would pick (the project's own settings first). Another model id can be typed in. The confirm box for the next session says which model and effort it will use. `switchboard.newSession.chooseModel` turns the two questions off.
