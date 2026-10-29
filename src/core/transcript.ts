@@ -24,10 +24,12 @@ export interface Digest {
   recap?: At<string>;
   /** The newest turn that ended badly. */
   stop?: At<{ why: 'error' | 'interrupted'; text?: string }>;
+  /** The model of the newest reply, e.g. "claude-opus-5-5". */
+  model?: At<string>;
 }
 
 type Fact = keyof Digest;
-const FACTS: readonly Fact[] = ['customTitle', 'aiTitle', 'reply', 'tokens', 'compacted', 'recap', 'stop'];
+const FACTS: readonly Fact[] = ['customTitle', 'aiTitle', 'reply', 'tokens', 'compacted', 'recap', 'stop', 'model'];
 
 /** Each fact from whichever digest saw it later. */
 export function mergeDigest(a: Digest, b: Digest): Digest {
@@ -99,6 +101,7 @@ function readRecord(r: Record<string, unknown>, at: number, d: Digest): void {
       }
       const tokens = tokensOf(m?.usage);
       if (tokens !== undefined) set('tokens', tokens);
+      if (typeof m?.model === 'string' && m.model && m.model !== '<synthetic>') set('model', m.model);
       if (text) set('reply', text);
       return;
     }
@@ -194,29 +197,25 @@ function proseLines(md: string, last = Infinity): string[] {
   return raw.slice(-Math.min(last, raw.length)).map(plain).filter(Boolean);
 }
 
-/** Longer lines are cut before cleaning: a card shows two lines at most. */
-const MAX_LINE = 600;
+/** Emphasis is only looked for in lines up to this long: the pattern gets slow on longer ones. */
+const MAX_EMPHASIS_LINE = 4000;
 
-/** One line of markdown as plain text. Emphasis goes first, so it can't hide a link. */
+/** One line of markdown as plain text, never cut short. Emphasis goes first, so it can't hide a link. */
 export function plain(line: string): string {
-  return line
-    .slice(0, MAX_LINE)
-    .replace(/^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)*/, '')
-    .replace(/(\*\*|__|\*|_|`)(\S(?:.*?\S)?)\1/g, '$2')
+  const bare = line.replace(/^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)*/, '');
+  return (bare.length > MAX_EMPHASIS_LINE ? bare : bare.replace(/(\*\*|__|\*|_|`)(\S(?:.*?\S)?)\1/g, '$2'))
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
- * The words a card shows under its title: Claude Code's recap when it is
- * newer than the reply, else the reply's first paragraph.
+ * The words a card shows under its title, in full: Claude Code's recap when
+ * it is newer than the reply, else the reply's first paragraph.
  */
-export function gist(d: Digest, max = 220): string | undefined {
+export function gist(d: Digest): string | undefined {
   const recap = d.recap && (!d.reply || d.recap.at > d.reply.at) ? d.recap.v : undefined;
-  const text = recap ?? (d.reply ? firstParagraph(d.reply.v) : undefined);
-  if (!text) return undefined;
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+  return recap ?? (d.reply ? firstParagraph(d.reply.v) : undefined);
 }
 
 /** The first paragraph that is more than headings, as one line of plain text. */

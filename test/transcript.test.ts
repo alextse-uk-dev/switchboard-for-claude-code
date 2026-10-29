@@ -125,7 +125,8 @@ test('gist: the recap when it is newer, else the first real paragraph', () => {
   assert.equal(gist(digestOf(reply('## Status\n\nThe exporter is **merged**.\n\nMore below.'))), 'The exporter is merged.');
   assert.equal(gist(digestOf(reply('Merged.'), recap('You asked for an exporter; it is merged.'))), 'You asked for an exporter; it is merged.');
   assert.equal(gist(digestOf(recap('Old recap.'), reply('New reply.'))), 'New reply.');
-  assert.equal(gist(digestOf(reply('x'.repeat(300))), 50)?.length, 50);
+  assert.equal(gist(digestOf(reply('word '.repeat(2000).trim())))?.length, 9999, 'never cut short, however long the line');
+  assert.equal(plain(`**${'a*'.repeat(5000)}**`).length, 10004, 'a very long line keeps its text, emphasis and all');
 });
 
 test('toCard: words, chips and the context meter', () => {
@@ -153,4 +154,26 @@ test('toCard: a hand-over card shows the prompt it would send; ~ only for real s
   assert.equal(c.detail, 'Read NOTES.md and start step 3.');
   assert.equal(c.prompt, true);
   assert.equal(c.cwd, '/home/samuel/shop');
+});
+
+test('toCard: cost, model and the whole reply', () => {
+  const s = toSession({ pid: 7, sessionId: 'abcdef12-0000', cwd: '/home/sam/shop', kind: 'interactive', name: 'shop-3', status: 'idle' })!;
+  const long = line({
+    type: 'assistant',
+    message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Merged.\n\n## Details\n\n- The exporter writes CSV and JSON.\n- 18 tests were added.' }], usage: { input_tokens: 10 } },
+  });
+  const d = digestOf(long);
+  const tally = { usd: 12.4, replies: 30, input: 1, output: 2, cacheRead: 3, cacheWrite: 4, unpriced: {} };
+  const base = { s, title: 'x', group: 'done' as const, outcome: outcomeOf(d, 150_000), digest: d, unread: false, where: 'here' as const, freshTokens: 150_000, home: '/home/sam' };
+  const c = toCard({ ...base, tally, helpers: 2 });
+  assert.equal(c.cost, '$12.40');
+  assert.match(c.costTip[0], /30 replies, 2 helper agents included/);
+  assert.equal(c.model, 'Opus 5.5');
+  assert.equal(c.detail, 'Merged.');
+  assert.match(c.reply ?? '', /18 tests were added/);
+  assert.equal(toCard({ ...base, tally: { ...tally, unpriced: { 'odd-model': 1 } } }).cost, '$12.40+', 'a + when some replies have no price');
+  assert.equal(toCard({ ...base, tally, showCost: false }).cost, undefined);
+  assert.equal(toCard({ ...base, tally: { ...tally, replies: 0 } }).cost, undefined);
+  const short = digestOf(reply('**Merged.**'));
+  assert.equal(toCard({ ...base, digest: short, outcome: outcomeOf(short, 150_000) }).reply, undefined, 'no "whole reply" when the detail already says it all');
 });

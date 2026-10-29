@@ -1,8 +1,8 @@
 {
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
-  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done. Click one to jump to its terminal tab.",
-  "version": "0.1.0",
+  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab.",
+  "version": "0.2.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -91,6 +91,17 @@
         "command": "switchboard.startNext",
         "title": "Start the Next Session",
         "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.addTodo",
+        "title": "Add a To-do",
+        "category": "Switchboard",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "switchboard.fitWidth",
+        "title": "Set the Board to Its Default Width",
+        "category": "Switchboard"
       }
     ],
     "menus": {
@@ -150,6 +161,23 @@
           "default": 150000,
           "minimum": 0,
           "description": "Suggest starting a new session once a finished session's context reaches this many tokens. 0 turns it off. A reply that hands over with a kickoff prompt is always suggested."
+        },
+        "switchboard.board.width": {
+          "type": "number",
+          "default": 440,
+          "minimum": 0,
+          "maximum": 1200,
+          "description": "The board's width in pixels. The side bar is widened to it the first time the board opens, and again whenever this setting changes; after that, drag its edge as usual. Run \"Switchboard: Set the Board to Its Default Width\" to go back to it. 0 leaves the side bar alone."
+        },
+        "switchboard.showCost": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show what each session's tokens would cost at Anthropic's API prices, helper agents included. On a Claude plan this is not what you pay."
+        },
+        "switchboard.todos.fromReplies": {
+          "type": "boolean",
+          "default": true,
+          "description": "Add to your to-do list what Claude's replies ask of you: lines such as \"Needs you: …\" or \"**You:** …\", and the list under a heading such as \"Needs you\"."
         },
         "switchboard.statusBar.enabled": {
           "type": "boolean",

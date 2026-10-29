@@ -1,26 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { Card } from './core/card';
+import { asMessage, type FromBoard, type TodoView } from './core/messages';
 import { GROUP_LABEL, GROUP_ORDER } from './core/types';
 
-/** What the board's page can ask for. Each action names a card by its key. */
-export type FromBoard =
-  | { type: 'open' | 'seen' | 'next' | 'copy'; key: string }
-  | { type: 'new' };
-
-const ACTIONS: ReadonlySet<string> = new Set(['open', 'seen', 'next', 'copy']);
-
-/** Accepts only the messages the page is meant to send. */
-function asMessage(m: unknown): FromBoard | 'ready' | undefined {
-  if (!m || typeof m !== 'object') return undefined;
-  const r = m as Record<string, unknown>;
-  if (r.type === 'ready') return 'ready';
-  if (r.type === 'new') return { type: 'new' };
-  if (typeof r.type === 'string' && ACTIONS.has(r.type) && typeof r.key === 'string') {
-    return { type: r.type as 'open', key: r.key };
-  }
-  return undefined;
-}
+export type { FromBoard, TodoView };
 
 /**
  * The sidebar board: a webview that draws the cards. It holds no state of
@@ -30,10 +14,16 @@ function asMessage(m: unknown): FromBoard | 'ready' | undefined {
 export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
   private cards: readonly Card[] = [];
+  private todos: readonly TodoView[] = [];
   private badge?: vscode.ViewBadge;
   private readonly shown = new vscode.EventEmitter<void>();
   /** Fires when the board comes into view. */
   readonly onDidShow = this.shown.event;
+  private readonly resized = new vscode.EventEmitter<number>();
+  /** Fires with the board's width in pixels when it is drawn and whenever it changes. */
+  readonly onDidResize = this.resized.event;
+  /** The board's width as the page last reported it, while it is visible. */
+  width?: number;
 
   constructor(
     private readonly media: vscode.Uri,
@@ -52,10 +42,14 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
     view.webview.onDidReceiveMessage((raw) => {
       const m = asMessage(raw);
       if (m === 'ready') this.post();
-      else if (m) this.onMessage(m);
+      else if (m?.type === 'width') {
+        this.width = m.px;
+        this.resized.fire(m.px);
+      } else if (m) this.onMessage(m);
     });
     view.onDidChangeVisibility(() => {
       if (view.visible) this.shown.fire();
+      else this.width = undefined;
     });
     view.onDidDispose(() => {
       if (this.view === view) this.view = undefined;
@@ -63,8 +57,9 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
     this.shown.fire();
   }
 
-  set(cards: readonly Card[], badge: vscode.ViewBadge | undefined): void {
+  set(cards: readonly Card[], todos: readonly TodoView[], badge: vscode.ViewBadge | undefined): void {
     this.cards = cards;
+    this.todos = todos;
     this.badge = badge;
     if (!this.view) return;
     this.view.badge = badge;
@@ -72,7 +67,7 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
   }
 
   private post(): void {
-    void this.view?.webview.postMessage({ type: 'state', cards: this.cards, order: GROUP_ORDER, labels: GROUP_LABEL });
+    void this.view?.webview.postMessage({ type: 'state', cards: this.cards, todos: this.todos, order: GROUP_ORDER, labels: GROUP_LABEL });
   }
 
   private html(webview: vscode.Webview): string {
@@ -102,5 +97,6 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
 
   dispose(): void {
     this.shown.dispose();
+    this.resized.dispose();
   }
 }

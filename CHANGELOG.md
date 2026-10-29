@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- A to-do list at the top of the board. What Claude asks you to do ("Needs you: …") lands there by itself; add your own, or put a card on the list with its to-do button. It is shared by every VS Code window and outlives the session.
+- Each card shows its context and its cost at API prices (helper agents included, breakdown on hover), and the model of its last reply.
+- Nothing on a card is cut short any more: titles, folders and Claude's words wrap, and **Show the whole reply** opens the whole last reply.
+- A default board width (440 pixels, `switchboard.board.width`), set the first time the board opens.
+
 ## 0.1.0
 
 - First release: a board of every Claude Code session on the machine, in coloured sections: Needs you, Waiting for your reply, Start a new session, Stopped, Done, Working and Idle.

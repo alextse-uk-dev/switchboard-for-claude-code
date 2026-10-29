@@ -3,18 +3,24 @@ import { watch, type FSWatcher } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { BoardView, type FromBoard } from './board';
-import { toCard, type Where } from './core/card';
+import { BoardView, type FromBoard, type TodoView } from './board';
+import { toCard, type Card, type Where } from './core/card';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
+import { asksOf, MAX_TODO, type Ask, type TodoOp } from './core/todo';
 import { outcomeOf, type Digest } from './core/transcript';
 import { GROUP_LABEL, GROUP_ORDER, keyOf, type Group, type Outcome, type Session } from './core/types';
 import { SharedState, type Peers } from './shared';
-import { claudeConfigDir, findClaude, message, SessionSource } from './source';
+import { claudeConfigDir, findClaude, message, SessionSource, type SessionCost } from './source';
+import { TodoStore } from './todos';
 
 const VIEW_ID = 'switchboard.sessions';
 const DEBOUNCE_MS = 300;
 const TICK_MS = 60_000;
+/** How far one `workbench.action.increaseViewSize` moves a side bar's edge, in pixels. */
+const RESIZE_STEP = 60;
+/** The board width last set on its own, so it is set once and the user's own resizing then stands. */
+const WIDTH_KEY = 'switchboard.boardWidthSet';
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const board = new Board(ctx);
@@ -43,6 +49,9 @@ const config = () => vscode.workspace.getConfiguration('switchboard');
 /** The context size from which a session is told to hand over (0: never). */
 const freshTokens = () => Math.max(0, config().get<number>('newSessionTokens', 150_000));
 
+/** The board's default width in pixels (0: leave the side bar as it is). */
+const boardWidth = () => Math.max(0, Math.round(config().get<number>('board.width', 440)));
+
 /** Wraps text in single quotes for a POSIX shell. */
 function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -59,6 +68,7 @@ class Board implements vscode.Disposable {
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   private readonly source: SessionSource;
   private readonly shared: SharedState;
+  private readonly todos: TodoStore;
   private readonly tracker = new Tracker();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly watchers: FSWatcher[] = [];
@@ -69,6 +79,12 @@ class Board implements vscode.Disposable {
 
   private sessions: Session[] = [];
   private digests = new Map<string, Digest>();
+  private costs = new Map<string, SessionCost>();
+  /** The reply each session's asks were last picked from, by session id. */
+  private asked = new Map<string, number>();
+  private cards = new Map<string, Card>();
+  /** A width change in progress, and what it set out to do (for the log). */
+  private fitting?: { from: number; target: number; timer: NodeJS.Timeout };
   private tabs = new Map<string, vscode.Terminal>();
   /** Sessions run from inside another session's process, by key. */
   private nested = new Set<string>();
@@ -80,9 +96,10 @@ class Board implements vscode.Disposable {
   private debounce?: NodeJS.Timeout;
   private tick?: NodeJS.Timeout;
 
-  constructor(ctx: vscode.ExtensionContext) {
+  constructor(private readonly ctx: vscode.ExtensionContext) {
     this.source = new SessionSource(claudeConfigDir(), () => this.claudePath(), (m) => this.log.warn(m));
     this.shared = new SharedState(ctx.globalStorageUri.fsPath, randomUUID());
+    this.todos = new TodoStore(ctx.globalStorageUri.fsPath);
     this.board = new BoardView(vscode.Uri.joinPath(ctx.extensionUri, 'media'), (m) => void this.fromBoard(m));
     this.status.name = 'Switchboard';
     this.status.command = 'workbench.view.extension.switchboard';
@@ -90,6 +107,7 @@ class Board implements vscode.Disposable {
 
   async start(): Promise<void> {
     await this.shared.init(Date.now());
+    await this.safe(this.todos.load(), false);
     if (vscode.window.state.focused) await this.safe(this.shared.noteFocused(Date.now()), undefined);
     const w = vscode.window;
     this.disposables.push(
@@ -103,6 +121,9 @@ class Board implements vscode.Disposable {
       vscode.commands.registerCommand('switchboard.markSeen', (arg) => this.markSeen(keyArg(arg))),
       vscode.commands.registerCommand('switchboard.markAllSeen', () => this.markAllSeen()),
       vscode.commands.registerCommand('switchboard.startNext', (arg) => this.startNext(keyArg(arg))),
+      vscode.commands.registerCommand('switchboard.addTodo', () => this.addTodo()),
+      vscode.commands.registerCommand('switchboard.fitWidth', () => this.fitWidthNow()),
+      this.board.onDidResize((px) => void this.onResize(px)),
       w.onDidChangeActiveTerminal(() => void this.noteLooking()),
       w.onDidChangeWindowState((s) => {
         if (s.focused) {
@@ -120,11 +141,17 @@ class Board implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('switchboard.claudePath')) this.claude = undefined;
         if (e.affectsConfiguration('switchboard')) this.render();
-        if (e.affectsConfiguration('switchboard.newSessionTokens')) this.schedule();
+        if (e.affectsConfiguration('switchboard.newSessionTokens') || e.affectsConfiguration('switchboard.showCost')) this.schedule();
+        // A new default width applies at once if the board is in view.
+        if (e.affectsConfiguration('switchboard.board.width') && this.board.width) void this.onResize(this.board.width);
       }),
     );
     this.watch(this.source.sessionsDir, () => this.schedule());
     this.watch(this.shared.seenDir, () => void this.shared.loadSeen().then(() => this.render()));
+    // Another window changed the to-do list.
+    this.watch(this.shared.dir, (file) => {
+      if (file === null || file === TodoStore.FILE) void this.safe(this.todos.load(), false).then((changed) => changed && this.render());
+    });
     this.tick = setInterval(() => {
       if (this.board.visible || vscode.window.state.focused) this.schedule();
     }, TICK_MS);
@@ -216,8 +243,39 @@ class Board implements vscode.Disposable {
 
     const digests = await Promise.all(sessions.map((s) => this.source.digestOf(s, now)));
     this.digests = new Map(sessions.flatMap((s, i): Array<[string, Digest]> => (digests[i] ? [[s.sessionId, digests[i]]] : [])));
+    await this.pickAsks(sessions);
     this.render();
     for (const e of events) void this.maybePop(e, looking);
+    await this.countCosts(sessions);
+  }
+
+  /**
+   * Counts what each session's tokens cost, then draws again. It runs after
+   * the first draw: the first count reads whole transcripts, which can take
+   * a while for long sessions. Sessions are counted one at a time, so the
+   * work comes in small pieces.
+   */
+  private async countCosts(sessions: readonly Session[]): Promise<void> {
+    if (!config().get<boolean>('showCost', true)) {
+      if (this.costs.size) {
+        this.costs = new Map();
+        this.render();
+      }
+      return;
+    }
+    const costs = new Map<string, SessionCost>();
+    let changed = false;
+    for (const s of sessions) {
+      if (!this.digests.has(s.sessionId)) continue;
+      const c = await this.source.costOf(s);
+      if (!c) continue;
+      costs.set(s.sessionId, c);
+      const old = this.costs.get(s.sessionId);
+      if (!old || old.tally.replies !== c.tally.replies || old.helpers !== c.helpers) changed = true;
+    }
+    if ([...this.costs.keys()].some((id) => !costs.has(id))) changed = true;
+    this.costs = costs;
+    if (changed) this.render();
   }
 
   private async matchTabs(sessions: readonly Session[]): Promise<Map<string, vscode.Terminal>> {
@@ -298,8 +356,25 @@ class Board implements vscode.Disposable {
     return o;
   }
 
+  /** Adds to the to-do list what idle sessions' newest replies ask of the user. */
+  private async pickAsks(sessions: readonly Session[]): Promise<void> {
+    const live = new Set(sessions.map((s) => s.sessionId));
+    for (const id of this.asked.keys()) if (!live.has(id)) this.asked.delete(id);
+    if (!config().get<boolean>('todos.fromReplies', true)) return;
+    const asks: Ask[] = [];
+    for (const s of sessions) {
+      const d = this.digests.get(s.sessionId);
+      // A reply in the middle of a turn may still change its mind.
+      if (s.status !== 'idle' || !d?.reply || this.asked.get(s.sessionId) === d.reply.at) continue;
+      this.asked.set(s.sessionId, d.reply.at);
+      for (const text of asksOf(d.reply.v)) asks.push({ sessionId: s.sessionId, session: displayTitle(s, d), text });
+    }
+    await this.safe(this.todos.addAsks(asks, Date.now()), false);
+  }
+
   private render(): void {
     const fresh = freshTokens();
+    const showCost = config().get<boolean>('showCost', true);
     const home = os.homedir();
     const rows = this.sessions.map((s): Row => {
       const key = keyOf(s);
@@ -325,15 +400,39 @@ class Board implements vscode.Disposable {
     const sorted = GROUP_ORDER.flatMap((g) =>
       rows.filter((r) => r.group === g).sort((a, b) => compareInGroup(g, a.changedAt ?? a.s.startedAt, b.changedAt ?? b.s.startedAt)),
     );
-    const cards = sorted.map((r) => toCard({ ...r, freshTokens: fresh, home }));
+    const cards = sorted.map((r) => {
+      const cost = this.costs.get(r.s.sessionId);
+      return toCard({ ...r, freshTokens: fresh, home, tally: cost?.tally, helpers: cost?.helpers, showCost });
+    });
+    this.cards = new Map(cards.map((c) => [c.key, c]));
+    const todos = this.todoViews(rows);
+    const open = todos.filter((t) => !t.doneAt).length;
     const badge = counts.needs + unread ? { value: counts.needs + unread, tooltip: counterText(counts, unread) } : undefined;
-    this.board.set(cards, badge);
+    this.board.set(cards, todos, badge);
     void vscode.commands.executeCommand('setContext', 'switchboard.hasUnread', unread > 0);
-    this.renderStatus(counts, unread, sorted);
+    this.renderStatus(counts, unread, sorted, open);
   }
 
-  private renderStatus(counts: Record<Group, number>, unread: number, rows: readonly Row[]): void {
-    const text = counterText(counts, unread);
+  /** The list as the page draws it: open items newest first, then done ones, most recently done first. */
+  private todoViews(rows: readonly Row[]): TodoView[] {
+    const keys = new Map(rows.map((r) => [r.s.sessionId, keyOf(r.s)]));
+    const list = this.todos.list.filter((t) => !t.deletedAt);
+    const open = list.filter((t) => !t.doneAt).sort((a, b) => b.createdAt - a.createdAt);
+    const done = list.filter((t) => t.doneAt).sort((a, b) => b.doneAt! - a.doneAt!);
+    return [...open, ...done].map((t) => ({
+      id: t.id,
+      text: t.text,
+      from: t.from,
+      session: t.session,
+      key: t.sessionId ? keys.get(t.sessionId) : undefined,
+      createdAt: t.createdAt,
+      doneAt: t.doneAt,
+    }));
+  }
+
+  private renderStatus(counts: Record<Group, number>, unread: number, rows: readonly Row[], todos: number): void {
+    const sessions = counterText(counts, unread);
+    const text = [sessions, todos ? `${todos} to do` : ''].filter(Boolean).join(' · ');
     if (!text || !config().get<boolean>('statusBar.enabled', true)) {
       this.status.hide();
       return;
@@ -346,6 +445,7 @@ class Board implements vscode.Disposable {
       const mine = rows.filter((r) => r.group === g);
       if (mine.length) tip.appendMarkdown(`**${GROUP_LABEL[g]} (${mine.length})**: ${mine.map((r) => escapeMd(r.title)).join(', ')}  \n`);
     }
+    if (todos) tip.appendMarkdown(`**To do**: ${todos} open  \n`);
     tip.appendMarkdown('\nClick to open Switchboard.');
     this.status.tooltip = tip;
     this.status.show();
@@ -395,6 +495,129 @@ class Board implements vscode.Disposable {
       }
       case 'new':
         return this.newSession();
+      case 'todo':
+        return this.cardToTodo(m.key);
+      case 'todoAdd':
+        await this.changeTodo({ op: 'add', id: `u-${randomUUID()}`, text: m.text });
+        return;
+      case 'todoDone':
+        await this.changeTodo({ op: 'done', id: m.id, done: m.done });
+        return;
+      case 'todoDelete':
+        await this.changeTodo({ op: 'delete', id: m.id });
+        return;
+      case 'todoClear':
+        await this.changeTodo({ op: 'clearDone' });
+        return;
+    }
+  }
+
+  private async changeTodo(o: TodoOp): Promise<boolean> {
+    const changed = await this.safe(this.todos.change(o, Date.now()), false);
+    if (changed) this.render();
+    return changed;
+  }
+
+  /** Puts what a card says (its question, prompt or recap) on the to-do list, linked to its session. */
+  private async cardToTodo(key: string): Promise<void> {
+    const row = this.rows.get(key);
+    const card = this.cards.get(key);
+    if (!row || !card) return;
+    let text = card.detail ?? card.title;
+    // Only a pasted document is longer; the start says what it is.
+    if (text.length > MAX_TODO) text = `${text.slice(0, MAX_TODO - 1)}…`;
+    if (await this.changeTodo({ op: 'add', id: `u-${randomUUID()}`, text, sessionId: row.s.sessionId, session: row.title })) {
+      void vscode.window.setStatusBarMessage('$(check) Added to your to-do list', 3000);
+    } else {
+      void vscode.window.showWarningMessage('Switchboard could not add that to your to-do list. The Switchboard output channel says why.');
+    }
+  }
+
+  private async addTodo(): Promise<void> {
+    const text = await vscode.window.showInputBox({ title: 'Add a to-do', prompt: 'Something for you to do. It shows at the top of the Switchboard board.' });
+    if (text?.trim()) await this.changeTodo({ op: 'add', id: `u-${randomUUID()}`, text });
+  }
+
+  /**
+   * Gives the board its default width the first time it is drawn (and again
+   * after the setting changes). After that the user's own resizing stands.
+   */
+  private async onResize(px: number): Promise<void> {
+    const f = this.fitting;
+    if (f) {
+      this.fitting = undefined;
+      clearTimeout(f.timer);
+      const moved = px !== f.from;
+      this.log.info(`Board width: ${f.from}px → ${px}px (default ${f.target}px).`);
+      if (!moved) this.log.warn('Could not change the side bar width. Drag its edge, or check that Switchboard is in the primary side bar.');
+      return;
+    }
+    const target = boardWidth();
+    if (!target || this.ctx.globalState.get<number>(WIDTH_KEY) === target) return;
+    await this.ctx.globalState.update(WIDTH_KEY, target);
+    // Only ever wider on its own: a side bar already wider than the default stays.
+    if (px < target - RESIZE_STEP / 2) await this.fitWidth(px, target);
+  }
+
+  /** The command: open the board and set it to the default width, wider or narrower. */
+  private async fitWidthNow(): Promise<void> {
+    const target = boardWidth();
+    if (!target) {
+      void vscode.window.showInformationMessage('Set switchboard.board.width to a width in pixels first (it is 0, which leaves the side bar alone).');
+      return;
+    }
+    // Marked as set first, so the width the board reports on opening doesn't start a second change.
+    await this.ctx.globalState.update(WIDTH_KEY, target);
+    await vscode.commands.executeCommand('workbench.view.extension.switchboard');
+    const px = this.board.width ?? (await new Promise<number | undefined>((resolve) => {
+      const d = this.board.onDidResize((w) => {
+        d.dispose();
+        resolve(w);
+      });
+      setTimeout(() => {
+        d.dispose();
+        resolve(undefined);
+      }, 3000);
+    }));
+    if (px === undefined) {
+      this.log.warn('The board did not report its width, so it was left alone.');
+      return;
+    }
+    await this.fitWidth(px, target);
+  }
+
+  /**
+   * VS Code has no setting or API for a view's width. Its "Increase/Decrease
+   * Current View Size" commands move the edge of whichever part has focus,
+   * and focus inside a webview doesn't count as being in the side bar. So
+   * Explorer (whose tree does) takes focus while the edge moves, and the board
+   * comes back straight after.
+   */
+  private async fitWidth(px: number, target: number): Promise<void> {
+    const steps = Math.max(-20, Math.min(20, Math.round((target - px) / RESIZE_STEP)));
+    if (!steps || this.fitting) return;
+    try {
+      await vscode.commands.executeCommand('workbench.view.explorer');
+      // Explorer hides the board only when both are in the same side bar.
+      // If the board is still in view, widening would move some other part.
+      await new Promise((r) => setTimeout(r, 250));
+      if (this.board.visible) {
+        this.log.warn('Switchboard is not in the same side bar as Explorer, so its width was left alone. Drag its edge instead.');
+        return;
+      }
+      const step = steps > 0 ? 'workbench.action.increaseViewSize' : 'workbench.action.decreaseViewSize';
+      for (let i = 0; i < Math.abs(steps); i++) await vscode.commands.executeCommand(step);
+      // The board reports its new width when it is back in view; onResize logs it.
+      const timer = setTimeout(() => {
+        if (this.fitting?.timer !== timer) return;
+        this.fitting = undefined;
+        this.log.warn('The board did not report its width after the change.');
+      }, 3000);
+      this.fitting = { from: px, target, timer };
+    } catch (e) {
+      this.log.warn(`Could not set the board width: ${message(e)}`);
+    } finally {
+      await vscode.commands.executeCommand('workbench.view.extension.switchboard');
     }
   }
 

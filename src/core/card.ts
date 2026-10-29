@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { formatUsd, modelName, type Tally } from './cost';
 import { formatTokens, waitingLabel } from './model';
 import { compactedSinceReply, contextTokens, gist, type Digest } from './transcript';
 import { keyOf, type Group, type Outcome, type Session } from './types';
@@ -30,6 +31,14 @@ export interface Card {
   compacted: boolean;
   /** A kickoff prompt was found, so it can be copied or started. */
   prompt: boolean;
+  /** What the session's tokens would cost at API prices, e.g. "$12.40". */
+  cost?: string;
+  /** The cost's breakdown, for its tooltip. */
+  costTip: string[];
+  /** The newest reply's model, e.g. "Opus 5.5". */
+  model?: string;
+  /** Claude's whole last reply (markdown), when it says more than the detail line. */
+  reply?: string;
   /** Lines for the hover tooltip. */
   tip: string[];
 }
@@ -45,6 +54,12 @@ export interface CardInput {
   where: Where;
   freshTokens: number;
   home: string;
+  /** Token totals for the session and its helper agents. */
+  tally?: Tally;
+  /** How many helper agents (subagents) the session has run. */
+  helpers?: number;
+  /** Show the cost (default true). */
+  showCost?: boolean;
 }
 
 function stateWords(c: CardInput, tokens: number | undefined): string {
@@ -99,6 +114,8 @@ export function toCard(c: CardInput): Card {
   if (tokens !== undefined) tip.push(`Context: ${tokens.toLocaleString('en-US')} tokens`);
   const compacted = c.digest ? compactedSinceReply(c.digest) : false;
   if (compacted && c.digest?.compacted?.v) tip.push(`Compacted from ${formatTokens(c.digest.compacted.v)} tokens`);
+  const reply = c.digest?.reply?.v;
+  const t = c.showCost !== false && c.tally?.replies ? c.tally : undefined;
   return {
     key: keyOf(c.s),
     title: c.title,
@@ -115,6 +132,28 @@ export function toCard(c: CardInput): Card {
     freshTokens: c.freshTokens,
     compacted,
     prompt: c.outcome?.kind === 'handoff' && !!c.outcome.prompt,
+    cost: t ? `${formatUsd(t.usd)}${Object.keys(t.unpriced).length ? '+' : ''}` : undefined,
+    costTip: t ? costTip(t, c.helpers ?? 0) : [],
+    model: c.digest?.model ? modelName(c.digest.model.v) : undefined,
+    reply: reply && saysMore(reply, detail) ? reply : undefined,
     tip,
   };
+}
+
+/** Whether a reply holds more than the detail line shows (markup and spacing aside). */
+function saysMore(reply: string, detail: string | undefined): boolean {
+  const bare = (s: string) => s.replace(/[\s*_`#>|-]/g, '').length;
+  return bare(reply) > bare(detail ?? '') + 15;
+}
+
+function costTip(t: Tally, helpers: number): string[] {
+  const n = (x: number) => x.toLocaleString('en-US');
+  const out = [
+    `About ${formatUsd(t.usd)} at API prices, for ${n(t.replies)} replies${helpers ? `, ${helpers} helper agent${helpers === 1 ? '' : 's'} included` : ''}.`,
+    `Tokens: ${n(t.input)} input, ${n(t.output)} output, ${n(t.cacheRead)} cache reads, ${n(t.cacheWrite)} cache writes.`,
+  ];
+  const unpriced = Object.entries(t.unpriced);
+  if (unpriced.length) out.push(`Not counted (no known price): ${unpriced.map(([m, k]) => `${k} on ${m}`).join(', ')}.`);
+  out.push('On a Claude plan this is what the same tokens would cost on the API, not what you pay.');
+  return out;
 }

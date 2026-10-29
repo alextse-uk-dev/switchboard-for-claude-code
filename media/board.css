@@ -9,6 +9,7 @@
   --radius: 6px;
 }
 
+.g-todo { --accent: var(--vscode-terminal-ansiCyan, #29b8db); }
 .g-needs { --accent: var(--vscode-charts-orange, #d18616); }
 .g-reply { --accent: var(--vscode-charts-yellow, #cca700); }
 .g-handoff { --accent: var(--vscode-charts-purple, #b180d7); }
@@ -160,17 +161,17 @@ button {
 
 .top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   min-width: 0;
 }
+.top > .glyph { margin-top: 2px; }
+/* Nothing on a card is cut short: long words and paths wrap instead. */
 .title {
   flex: 1;
   min-width: 0;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .card.unread .title { font-weight: 700; }
 .card.unread .title::after {
@@ -185,22 +186,27 @@ button {
 }
 .age {
   flex: none;
+  margin-top: 1px;
   font-size: 11px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-.seen {
+.tools {
   flex: none;
   display: none;
+  gap: 2px;
+}
+.card:hover .tools, .card:focus-within .tools { display: inline-flex; }
+.tool {
+  display: inline-flex;
   width: 18px;
   height: 18px;
   border-radius: 4px;
   align-items: center;
   justify-content: center;
 }
-.card:hover .seen, .card:focus-within .seen { display: inline-flex; }
-.seen:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.tool:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
 .tick { width: 14px; height: 14px; fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 .meta {
@@ -213,7 +219,8 @@ button {
   color: var(--muted);
 }
 .state { font-weight: 600; }
-.folder { display: inline-flex; align-items: center; gap: 4px; }
+.folder { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.fold { flex: none; }
 .fold { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; opacity: 0.85; }
 .chip {
   padding: 0 6px;
@@ -223,14 +230,26 @@ button {
   color: var(--muted);
 }
 
+/* Context, cost and model, one line under the folder. */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 12px;
+  margin: 4px 0 0 22px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stats .k { margin-right: 4px; }
+.stats .v { color: var(--fg); font-weight: 600; }
+.cost, .model { display: inline-flex; align-items: center; }
 .ctx {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
+  gap: 5px;
 }
+.ctx .k { margin-right: 0; }
 .ctx .bar {
   width: 34px;
   height: 4px;
@@ -247,16 +266,14 @@ button {
 }
 .ctx.low { --meter: var(--vscode-charts-green, #89d185); }
 .ctx.mid { --meter: var(--vscode-charts-yellow, #cca700); }
-.ctx.high { --meter: var(--vscode-charts-red, #f14c4c); color: color-mix(in srgb, var(--meter) 70%, var(--fg)); font-weight: 600; }
+.ctx.high { --meter: var(--vscode-charts-red, #f14c4c); }
+.ctx.high .v { color: color-mix(in srgb, var(--meter) 70%, var(--fg)); }
 
 .detail {
   margin: 5px 0 0 22px;
   font-size: 12px;
   color: var(--muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 .detail.quote {
@@ -265,6 +282,128 @@ button {
   color: var(--fg);
   font-style: italic;
 }
+
+.link {
+  font-size: 11.5px;
+  color: var(--vscode-textLink-foreground);
+}
+.link:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground)); text-decoration: underline; }
+.more { margin: 5px 0 0 22px; }
+
+/* Claude's whole reply, drawn from its markdown. */
+.reply {
+  margin: 6px 0 0 22px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  cursor: text;
+  user-select: text;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border: 1px solid var(--line);
+}
+.reply > :first-child { margin-top: 0; }
+.reply > :last-child { margin-bottom: 0; }
+.reply p { margin: 0 0 6px; }
+.reply .md-h { margin: 8px 0 4px; font-weight: 700; }
+.reply .md-li {
+  position: relative;
+  margin: 0 0 3px;
+  padding-left: calc(14px + var(--indent, 0) * 12px);
+}
+.reply .md-li::before {
+  content: attr(data-mark);
+  position: absolute;
+  left: calc(var(--indent, 0) * 12px);
+  color: var(--muted);
+}
+.reply blockquote {
+  margin: 0 0 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+.reply code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+}
+.reply pre {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.reply pre code { padding: 0; background: none; }
+.md-table { margin: 0 0 6px; overflow-x: auto; }
+.md-table table { border-collapse: collapse; font-size: 11.5px; }
+.md-table th, .md-table td {
+  padding: 2px 6px;
+  text-align: left;
+  vertical-align: top;
+  border: 1px solid var(--line);
+}
+
+/* --- To do ---------------------------------------------------------- */
+
+.todos { display: flex; flex-direction: column; gap: 4px; }
+.todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.todo.done { background: none; border-color: var(--line); }
+.todo.done .todo-text { color: var(--muted); text-decoration: line-through; }
+.check { flex: none; margin-top: 1px; line-height: 0; }
+.box { width: 15px; height: 15px; fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.todo-body { flex: 1; min-width: 0; }
+.todo-text { overflow-wrap: anywhere; }
+.todo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.todo-meta .from { font-size: 11px; text-align: left; }
+.todo-meta .gone { font-style: italic; }
+.x {
+  flex: none;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+.todo:hover .x, .todo:focus-within .x { opacity: 1; }
+.x:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.todo-empty { margin: 0 2px 2px; font-size: 12px; color: var(--muted); }
+.todo-add { display: flex; gap: 6px; margin-top: 2px; }
+.todo-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--line));
+}
+.todo-input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.todo-input::placeholder { color: var(--vscode-input-placeholderForeground); }
+.todo-donebar { display: flex; gap: 12px; margin: 2px 2px 0; }
 
 .actions {
   display: flex;

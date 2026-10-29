@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { constants as fsc, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { countLines, emptyCost, sumTallies, type CostState, type Tally } from './core/cost';
 import { lineage, parseAgentsJson, parsePs, projectSlug, toSession, withFileFields } from './core/parse';
 import { readChunk, type Digest } from './core/transcript';
 import type { Session } from './core/types';
@@ -53,6 +54,20 @@ const MAX_BACK_BYTES = 16 * 1024 * 1024;
 const LIST_TTL_MS = 30_000;
 /** How long to wait before looking again for a transcript that wasn't there. */
 const MISSING_RETRY_MS = 30_000;
+/** How much the cost count reads at a time, and the longest line it waits for before skipping it. */
+const COST_CHUNK = 8 * 1024 * 1024;
+const MAX_COST_LINE = 128 * 1024 * 1024;
+
+interface CostFile extends CostState {
+  /** Byte offset just past the last complete line counted. */
+  offset: number;
+}
+
+/** A session's token totals: its own transcript plus its helper agents'. */
+export interface SessionCost {
+  tally: Tally;
+  helpers: number;
+}
 
 interface Transcript {
   file?: string;
@@ -73,6 +88,8 @@ export class SessionSource {
   private readonly projectsDir: string;
   private listed?: { at: number; key: string; sessions: Session[] };
   private transcripts = new Map<string, Transcript>();
+  /** Cost counts by session id, then by transcript file. */
+  private costs = new Map<string, Map<string, CostFile>>();
   private parents = new Map<number, number>();
 
   constructor(
@@ -216,6 +233,41 @@ export class SessionSource {
     }
   }
 
+  /**
+   * What the session's tokens add up to. The first call reads its whole
+   * transcript, and those of its helper agents (`<session id>/subagents/`
+   * next to it); later calls read only what was added. Call digestOf first:
+   * it finds the transcript.
+   */
+  async costOf(s: Session): Promise<SessionCost | undefined> {
+    const main = this.transcripts.get(s.sessionId)?.file;
+    if (!main) return undefined;
+    let byFile = this.costs.get(s.sessionId);
+    if (!byFile) {
+      byFile = new Map();
+      this.costs.set(s.sessionId, byFile);
+    }
+    const helpersDir = path.join(path.dirname(main), s.sessionId, 'subagents');
+    const helpers = (await fs.readdir(helpersDir).catch(() => [] as string[]))
+      .filter((n) => n.endsWith('.jsonl'))
+      .sort()
+      .map((n) => path.join(helpersDir, n));
+    const files = [main, ...helpers];
+    for (const f of files) {
+      let c = byFile.get(f);
+      if (!c) {
+        c = { offset: 0, ...emptyCost() };
+        byFile.set(f, c);
+      }
+      try {
+        await countNew(f, c);
+      } catch (e) {
+        this.log(`Could not count the tokens in ${path.basename(f)}: ${message(e)}`);
+      }
+    }
+    return { tally: sumTallies(files.map((f) => byFile.get(f)!.tally)), helpers: helpers.length };
+  }
+
   private async findTranscript(s: Session): Promise<string | undefined> {
     const name = `${s.sessionId}.jsonl`;
     const direct = path.join(this.projectsDir, projectSlug(s.cwd), name);
@@ -249,6 +301,40 @@ export class SessionSource {
   /** Drops cached state for sessions that have ended. */
   forget(liveIds: ReadonlySet<string>): void {
     for (const id of this.transcripts.keys()) if (!liveIds.has(id)) this.transcripts.delete(id);
+    for (const id of this.costs.keys()) if (!liveIds.has(id)) this.costs.delete(id);
+  }
+}
+
+/** Counts the complete lines added to a transcript since the last call. */
+async function countNew(file: string, c: CostFile): Promise<void> {
+  const size = (await fs.stat(file)).size;
+  if (size < c.offset) Object.assign(c, { offset: 0, ...emptyCost() });
+  if (size === c.offset) return;
+  const fh = await fs.open(file, 'r');
+  try {
+    let span = COST_CHUNK;
+    while (c.offset < size) {
+      const end = Math.min(size, c.offset + span);
+      const buf = await readRange(fh, c.offset, end);
+      const nl = buf.lastIndexOf(0x0a);
+      if (nl < 0) {
+        // The newest line may still be being written; the next look counts it.
+        if (end >= size) return;
+        if (span >= MAX_COST_LINE) {
+          // No reply is this long; skip it. The broken rest fails to parse.
+          c.offset = end;
+          span = COST_CHUNK;
+        } else {
+          span *= 2;
+        }
+        continue;
+      }
+      countLines(buf.subarray(0, nl).toString('utf8'), c);
+      c.offset += nl + 1;
+      span = COST_CHUNK;
+    }
+  } finally {
+    await fh.close();
   }
 }
 

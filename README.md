@@ -7,8 +7,8 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 > Not an official Anthropic product. Switchboard only reads the status files Claude Code writes on your machine.
 
 <p>
-  <img src="docs/board-dark.png" alt="The Switchboard board in a dark theme, with sessions grouped as Needs you, Waiting for your reply, Start a new session, Stopped, Done, Working and Idle" width="300">
-  <img src="docs/board-light.png" alt="The same board in a light theme" width="300">
+  <img src="docs/board-dark.png" alt="The Switchboard board in a dark theme: a to-do list at the top, then sessions grouped as Needs you, Waiting for your reply, Start a new session, Done and Working, each card with its context, cost and model" width="440">
+  <img src="docs/board-light.png" alt="The same board in a light theme" width="440">
 </p>
 
 *The sessions in these pictures are made up.*
@@ -23,7 +23,17 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
   - **Done:** a normal final reply. The card shows Claude Code's own recap, or the reply's first paragraph.
   - **Working**
   - **Idle:** nothing said yet.
-- **Each card shows** the session's title (the name you gave it, or else Claude's own title, never `my-repo-27`), its folder, how long ago it changed, and a context meter. A dot marks a turn that finished since you last looked.
+- **Each card shows**, in full and never cut short:
+  - the session's title (the name you gave it, or else Claude's own title, never `my-repo-27`), its folder, and how long ago it changed;
+  - its **context** size, with a meter that fills towards the new-session line;
+  - its **cost**: what its tokens, helper agents included, would cost at Anthropic's API prices (hover for the breakdown), and the model of its last reply;
+  - what Claude last said: the question it asks, its recap, or the error. **Show the whole reply** opens Claude's whole last reply on the card.
+  A dot marks a turn that finished since you last looked.
+- **A to-do list for you**, at the top of the board.
+  - What Claude asks you to do lands there by itself: a line such as `Needs you: approve the deploy` or `**You:** run the migration`, or the list under a heading such as "Needs you".
+  - Add your own with the field under the list, or put what a card says on the list with its to-do button.
+  - Tick an item when it's done. Each item names the session it came from, and a click opens that session. The list lives on after the session ends, and every VS Code window shows the same list.
+- **A default width.** The first time the board opens, the side bar is widened to 440 pixels (a setting). After that, drag its edge as usual.
 - **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
   - A background session opens with `claude attach` in a new tab.
@@ -38,9 +48,9 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 
 1. Claude Code keeps a small status file per running session (`~/.claude/sessions/<pid>.json`): busy, waiting or idle. Switchboard watches that folder, so it does nothing while nothing changes.
 2. When a status file changes, Switchboard reads Claude Code's own session list (`claude agents --json`), adding each file's change time.
-3. Titles, and how each turn ended, come from the end of each session's transcript: Claude's last reply, Claude Code's recap, the context size, a compaction or an error. Only new lines are read after the first look.
+3. Titles, and how each turn ended, come from the end of each session's transcript: Claude's last reply, Claude Code's recap, the context size, a compaction or an error. The cost comes from the whole transcript and those of its helper agents. Only new lines are read after the first look.
 4. A session is matched to its tab through the process tree: the session's parent process is the tab's shell.
-5. "Seen" marks live in the extension's storage folder, one small file per session, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
+5. "Seen" marks and the to-do list live in the extension's storage folder, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
 6. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
 
 Nothing leaves your machine.
@@ -52,7 +62,7 @@ Until it is on the Marketplace, install it from a `.vsix` file:
 ```sh
 npm install
 npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
-code --install-extension switchboard-for-claude-code-0.1.0.vsix
+code --install-extension switchboard-for-claude-code-0.2.0.vsix
 ```
 
 Then run **Developer: Reload Window**.
@@ -67,6 +77,9 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.popups.finished` | `true` | Pop up when a session finishes a turn. |
 | `switchboard.popups.finishedMinSeconds` | `30` | Only for turns at least this long. |
 | `switchboard.newSessionTokens` | `150000` | Suggest a new session once a finished session's context reaches this many tokens. `0` turns it off. |
+| `switchboard.board.width` | `440` | The board's width in pixels, set the first time it opens and whenever this changes. **Switchboard: Set the Board to Its Default Width** sets it again. `0` leaves the side bar alone. |
+| `switchboard.showCost` | `true` | Show each session's cost at API prices. |
+| `switchboard.todos.fromReplies` | `true` | Add what Claude's replies ask of you to the to-do list. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 
@@ -77,6 +90,9 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 - A VS Code window can only bring forward its own tabs. A session in another window, or in another terminal app, is listed ("other window", "outside VS Code"), but a click can't jump there yet.
 - "Looking at it" means its terminal is the active one in a focused window. VS Code doesn't say whether the terminal panel itself is visible.
 - A session started by another session (by a hook or a tool) is listed as "inside another session" and has no tab of its own.
+- **Width.** VS Code has no setting for a side bar's width, and its resize commands act only on the part that has focus (a webview doesn't count). So, to set the default width, Switchboard opens Explorer for a moment, widens the side bar in steps of 60 pixels, and comes back. It lands within about one step of the setting. If you have moved Switchboard out of the primary side bar, drag its edge instead.
+- **Cost** is an estimate from the token counts Claude Code writes into each transcript, at the list prices built into this version (October 2026). On a Claude plan it is what the same tokens would cost on the API, not what you pay. A model it has no price for is left out, and the cost then shows a `+`.
+- **The to-do list** reads replies the way you'd skim them: only lines labelled for you (`Needs you:`, `**You:**`, `Over to you:`) and lists under such a heading count. A reply that asks in other words shows under "Waiting for your reply" instead.
 - macOS and Linux only for now (it uses `ps` to read the process tree).
 
 ## Development
