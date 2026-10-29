@@ -62,7 +62,7 @@ Until it is on the Marketplace, install it from a `.vsix` file:
 ```sh
 npm install
 npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
-code --install-extension switchboard-for-claude-code-0.2.0.vsix
+code --install-extension switchboard-for-claude-code-0.2.1.vsix
 ```
 
 Then run **Developer: Reload Window**.
@@ -86,7 +86,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 ## Limits
 
 - `claude agents --json` is part of a research preview, so its format may change. If it fails, Switchboard reads the status files directly. A status it doesn't recognise shows as "status unknown", never as a guess.
-- "Waiting for your reply" and "Start a new session" are read from the words of Claude's last reply: a question in its last lines, or words such as "kickoff prompt" or "next session". The card always shows the words it went by, so you can judge.
+- "Waiting for your reply" and "Start a new session" are read from the words of Claude's last reply (a question in its last lines, words that wait on you such as "the only thing left is your OK", or words such as "kickoff prompt" or "next session"), and from Claude Code's own recap when it came later ("Next: reply …"). The card always shows the words it went by, so you can judge.
 - A VS Code window can only bring forward its own tabs. A session in another window, or in another terminal app, is listed ("other window", "outside VS Code"), but a click can't jump there yet.
 - "Looking at it" means its terminal is the active one in a focused window. VS Code doesn't say whether the terminal panel itself is visible.
 - A session started by another session (by a hook or a tool) is listed as "inside another session" and has no tab of its own.

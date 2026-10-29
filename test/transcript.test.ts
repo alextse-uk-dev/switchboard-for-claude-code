@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { toCard } from '../src/core/card';
 import { toSession } from '../src/core/parse';
-import { askOf, contextTokens, gist, kickoffPrompt, mergeDigest, outcomeOf, plain, readChunk, type Digest } from '../src/core/transcript';
+import { askOf, contextTokens, gist, kickoffPrompt, mergeDigest, nextStep, outcomeOf, plain, readChunk, type Digest } from '../src/core/transcript';
 
 const line = (o: object) => JSON.stringify(o);
 const reply = (text: string, tokens = 20_000, extra: object = {}) =>
@@ -176,4 +176,37 @@ test('toCard: cost, model and the whole reply', () => {
   assert.equal(toCard({ ...base, tally: { ...tally, replies: 0 } }).cost, undefined);
   const short = digestOf(reply('**Merged.**'));
   assert.equal(toCard({ ...base, digest: short, outcome: outcomeOf(short, 150_000) }).reply, undefined, 'no "whole reply" when the detail already says it all');
+});
+
+test('outcomeOf: a reply that waits on you without asking a question still waits for your reply', () => {
+  const o = outcomeOf(digestOf(reply('All 6,011 tests pass.\n\nThe only thing left before I push is your **"screens OK"** on the two form screenshots.')), 150_000);
+  assert.deepEqual(o, { kind: 'question', ask: 'The only thing left before I push is your "screens OK" on the two form screenshots.' });
+  assert.equal(outcomeOf(digestOf(reply('Pushed.\n\nOnce you say go, I merge it.')), 150_000).kind, 'question');
+  assert.equal(outcomeOf(digestOf(reply('Your OK earlier covered this, so it is merged.')), 150_000).kind, 'done');
+  assert.equal(outcomeOf(digestOf(reply('I am waiting for CI.')), 150_000).kind, 'done');
+});
+
+test('outcomeOf: Claude Code\'s recap, when newer than the reply, says whose step is next', () => {
+  const after = (text: string) => outcomeOf(digestOf(reply('The branch is ready.'), compact(90_000), recap(text)), 150_000);
+  assert.deepEqual(after('You asked for a cost page; it is built. Next: reply "screens OK" on the two screenshots so I can push.'), {
+    kind: 'question',
+    ask: 'reply "screens OK" on the two screenshots so I can push.',
+  });
+  assert.equal(after('It is built. Next, I push it once you say go. (disable recaps in /config)').kind, 'question');
+  assert.equal(after('The PR is open. Next, run Developer: Reload Window and take your second look.').kind, 'question');
+  assert.equal(after('The PR is open. Next, I\'ll watch CI until it merges.').kind, 'done');
+  assert.equal(after('CI is running. Once it merges, I rebase PR 5 and push it.').kind, 'done');
+  assert.equal(after('It is live. Nothing is pending; next, say if you want a click-through.').kind, 'done');
+  assert.deepEqual(after('Both are merged. Next, start PR 4 in a fresh session with the saved kickoff prompt.'), {
+    kind: 'handoff',
+    reason: 'kickoff',
+    line: 'start PR 4 in a fresh session with the saved kickoff prompt.',
+  });
+  // A recap older than the reply is out of date.
+  assert.equal(outcomeOf(digestOf(recap('Next: reply "go".'), reply('Merged and done.')), 150_000).kind, 'done');
+});
+
+test('nextStep: the words after "Next", else the last sentence', () => {
+  assert.equal(nextStep('Built. Next step: press Cmd+Shift+P.'), 'press Cmd+Shift+P.');
+  assert.equal(nextStep('Built and pushed. Answer the two cards on the page. (disable recaps in /config)'), 'Answer the two cards on the page.');
 });

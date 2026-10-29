@@ -146,13 +146,27 @@ const HANDOFF = /\bkick-?off\b|\bready-to-paste\b|\b(?:next|fresh) session\b|\bs
 const ASKS = /^(?:reply|answer|tell me|let me know|say|pick|choose|confirm|shall i|should i|do you want|want me to|ok to)\b/i;
 
 /**
+ * Words anywhere in a line that say the work waits on the user: "the only
+ * thing left is your OK", "waiting for your answer", "once you say go".
+ */
+const WAITS = /\b(?:waiting (?:for|on) (?:you|your)\b|(?:i need|needs|awaits|waits for|wait for) your\b|(?:left|missing|remaining|needed)\b[^.?!]{0,80}\b(?:is|are) your\b|once you (?:say|reply|answer|confirm|approve|decide|send|tell|choose|pick|look)\b|your (?:ok|okay|go-ahead|approval|answers?|reply|decision|confirmation|sign-off)\b(?! (?:earlier|above|before|was|is in|came))|over to you\b|paste (?:it|them|the \w+|your \w+) (?:back|here)\b)/i;
+
+/** A recap that says nothing is waiting. */
+const NOTHING_PENDING = /\b(?:nothing (?:is )?(?:pending|needed|left|waiting)|no action (?:is )?needed|nothing (?:else )?(?:needed )?from you|nothing for you)\b/i;
+
+/** The words that begin the user's part in a recap's next step. */
+const YOUR_STEP = /^(?:reply|answer|paste|run|press|open|take|choose|pick|review|check|confirm|approve|look|add|give|decide|tell|say|send|test|try|reload|click|tick|read|start)\b/i;
+
+/**
  * How an idle session's last turn ended. `freshTokens` is the context size
- * from which it suggests a new session (0 turns that off).
+ * from which it suggests a new session (0 turns that off). Claude Code's
+ * recap, when it came after the reply, has the last word on what is next.
  */
 export function outcomeOf(d: Digest, freshTokens: number): Outcome {
   if (d.stop && (!d.reply || d.stop.at > d.reply.at)) return { kind: 'stopped', why: d.stop.v.why, text: d.stop.v.text };
   if (!d.reply) return { kind: 'blank' };
   const reply = d.reply.v;
+  const recap = d.recap && d.recap.at > d.reply.at ? d.recap.v : undefined;
   const handoff = HANDOFF.exec(reply);
   if (handoff) {
     const lineStart = reply.lastIndexOf('\n', handoff.index) + 1;
@@ -160,7 +174,10 @@ export function outcomeOf(d: Digest, freshTokens: number): Outcome {
     const line = plain(reply.slice(lineStart, lineEnd < 0 ? undefined : lineEnd)) || undefined;
     return { kind: 'handoff', reason: 'kickoff', prompt: kickoffPrompt(reply, handoff.index), line };
   }
-  const ask = askOf(reply);
+  const next = recap ? nextStep(recap) : undefined;
+  if (next && HANDOFF.test(next)) return { kind: 'handoff', reason: 'kickoff', line: next };
+  // "Nothing is pending; next, say if you want more" is an offer, not an ask.
+  const ask = askOf(reply) ?? (next && !NOTHING_PENDING.test(recap!) && yoursToDo(next) ? next : undefined);
   if (ask) return { kind: 'question', ask };
   const tokens = contextTokens(d);
   if (freshTokens > 0 && tokens !== undefined && tokens >= freshTokens) return { kind: 'handoff', reason: 'context' };
@@ -180,10 +197,32 @@ export function kickoffPrompt(reply: string, from = 0): string | undefined {
   return text && text.length >= 10 ? text : undefined;
 }
 
-/** The line of a reply's last few that asks the user something, as plain text. */
+/** The line of a reply's last few that asks the user something, or waits on them, as plain text. */
 export function askOf(reply: string): string | undefined {
   const lines = proseLines(reply, 3).reverse();
-  return lines.find((l) => /\?["'”’)*_]*$/.test(l) || ASKS.test(l));
+  return lines.find((l) => /\?["'”’)*_]*$/.test(l) || ASKS.test(l) || WAITS.test(l));
+}
+
+/**
+ * A recap's last step: what follows "Next," or "Next:", else its last
+ * sentence. Claude Code's own "(disable recaps in /config)" hint is dropped.
+ */
+export function nextStep(recap: string): string | undefined {
+  const text = recap.replace(/\s*\(disable recaps in \/config\)\s*$/i, '').replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  const m = /\bnext(?: step)?(?: is)?\s*[,:：—–-]\s*(.+)$/i.exec(text);
+  if (m) return m[1].trim();
+  const sentences = text.split(/(?<=[.!?])\s+(?=[A-Z"“])/);
+  return sentences[sentences.length - 1];
+}
+
+/** Whether a recap's next step is the user's to take, not Claude's. */
+export function yoursToDo(next: string): boolean {
+  if (NOTHING_PENDING.test(next)) return false;
+  if (WAITS.test(next) || /\b(?:tell me|let me know|say (?:go|yes|if|which))\b/i.test(next)) return true;
+  // "I'll push…", "Once it merges, I rebase…": Claude's own step.
+  if (/^(?:i|i'll|i'm|we|we'll)\b/i.test(next) || /^(?:once|when|after)\b[^,]*,\s*i\b/i.test(next)) return false;
+  return YOUR_STEP.test(next);
 }
 
 const FENCED = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n[ \t]*\1[ \t]*$/gm;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- A session that waits on you without asking a question ("the only thing left is your OK", "once you say go") now shows under **Waiting for your reply**, not Done.
+- Claude Code's recap, when it comes after the reply, has the last word: "Next: reply …" or "Next, answer …" means it waits for you, "Next, I'll …" means it doesn't, and "Next, start … in a fresh session" means a new session.
+
 ## 0.2.0
 
 - A to-do list at the top of the board. What Claude asks you to do ("Needs you: …") lands there by itself; add your own, or put a card on the list with its to-do button. It is shared by every VS Code window and outlives the session.
