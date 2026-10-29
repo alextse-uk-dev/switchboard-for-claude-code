@@ -1,4 +1,5 @@
-import type { Kind, Session, Status, Titles } from './types';
+import type { Digest } from './transcript';
+import type { Kind, Session, Status } from './types';
 
 const STATUSES: ReadonlySet<string> = new Set(['busy', 'waiting', 'idle']);
 
@@ -66,34 +67,11 @@ export function withFileFields(s: Session, file: Session | undefined): Session {
   };
 }
 
-const CUSTOM = '"type":"custom-title"';
-const AI = '"type":"ai-title"';
-
-/**
- * Finds the newest title records in a chunk of a session transcript (JSONL).
- * The chunk may start or end mid-line; broken lines are skipped.
- */
-export function parseTitles(chunk: string, into: Titles = {}): Titles {
-  const out: Titles = { ...into };
-  for (const line of chunk.split('\n')) {
-    const isCustom = line.includes(CUSTOM);
-    if (!isCustom && !line.includes(AI)) continue;
-    try {
-      const r = JSON.parse(line) as Record<string, unknown>;
-      if (isCustom && typeof r.customTitle === 'string' && r.customTitle.trim()) out.customTitle = r.customTitle.trim();
-      else if (!isCustom && typeof r.aiTitle === 'string' && r.aiTitle.trim()) out.aiTitle = r.aiTitle.trim();
-    } catch {
-      // A line cut by the chunk edge.
-    }
-  }
-  return out;
-}
-
 /** The name a person would recognise: a title they set, the name they chose, then Claude's own title. */
-export function displayTitle(s: Session, t: Titles | undefined): string {
-  if (t?.customTitle) return t.customTitle;
+export function displayTitle(s: Session, d: Digest | undefined): string {
+  if (d?.customTitle) return d.customTitle.v;
   if (s.nameSource === 'user' || s.nameSource === 'peer') return s.name;
-  return t?.aiTitle ?? s.name;
+  return d?.aiTitle?.v ?? s.name;
 }
 
 /** Claude Code's transcript folder name for a working directory. */

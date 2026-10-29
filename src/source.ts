@@ -2,8 +2,9 @@ import { execFile } from 'node:child_process';
 import { constants as fsc, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { lineage, parseAgentsJson, parsePs, parseTitles, projectSlug, toSession, withFileFields } from './core/parse';
-import type { Session, Titles } from './core/types';
+import { lineage, parseAgentsJson, parsePs, projectSlug, toSession, withFileFields } from './core/parse';
+import { readChunk, type Digest } from './core/transcript';
+import type { Session } from './core/types';
 import { alive } from './shared';
 
 /** Where Claude Code keeps its state: `$CLAUDE_CONFIG_DIR`, or `~/.claude`. */
@@ -45,7 +46,7 @@ function run(file: string, args: string[], timeout: number): Promise<string> {
 
 export const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** How far back the first title search reads, and how much of the end of a transcript at a time. */
+/** How much of the end of a transcript the first look reads at a time, and how far back it goes at most. */
 const TAIL_BYTES = 1024 * 1024;
 const MAX_BACK_BYTES = 16 * 1024 * 1024;
 /** How long the CLI list is trusted while no session appears or disappears. */
@@ -58,14 +59,14 @@ interface Transcript {
   missingSince?: number;
   /** Byte offset just past the last complete line read. */
   offset: number;
-  titles: Titles;
+  digest: Digest;
 }
 
 /**
  * Reads what Claude Code says about its sessions. The list itself comes from
  * `claude agents --json` (the supported interface); the per-session status
  * files in `sessions/` add when each status changed, and the transcripts give
- * the titles.
+ * the titles and how each turn ended.
  */
 export class SessionSource {
   readonly sessionsDir: string;
@@ -137,15 +138,17 @@ export class SessionSource {
     return out;
   }
 
-  /** The newest titles in a session's transcript, reading only what was added since the last call. */
-  async titlesOf(s: Session, now: number): Promise<Titles | undefined> {
+  /** What a session's transcript says, reading only what was added since the last call. */
+  async digestOf(s: Session, now: number): Promise<Digest | undefined> {
     let t = this.transcripts.get(s.sessionId);
     if (!t) {
-      t = { offset: 0, titles: {} };
+      t = { offset: 0, digest: {} };
       this.transcripts.set(s.sessionId, t);
     }
     if (!t.file) {
-      if (t.missingSince !== undefined && now - t.missingSince < MISSING_RETRY_MS) return undefined;
+      // A session whose status moved since the last miss has likely written its transcript by now.
+      const moved = (s.statusUpdatedAt ?? 0) > (t.missingSince ?? 0);
+      if (t.missingSince !== undefined && now - t.missingSince < MISSING_RETRY_MS && !moved) return undefined;
       t.file = await this.findTranscript(s);
       if (!t.file) {
         t.missingSince = now;
@@ -153,30 +156,52 @@ export class SessionSource {
       }
     }
     try {
-      await this.readNewTitles(t);
+      await this.readNew(t);
     } catch (e) {
-      this.log(`Could not read the title of ${s.name}: ${message(e)}`);
+      this.log(`Could not read the transcript of ${s.name}: ${message(e)}`);
       t.file = undefined;
     }
-    return t.titles;
+    return t.digest;
   }
 
-  private async readNewTitles(t: Transcript): Promise<void> {
+  private async readNew(t: Transcript): Promise<void> {
     const size = (await fs.stat(t.file!)).size;
-    if (size < t.offset) Object.assign(t, { offset: 0, titles: {} });
+    if (size < t.offset) Object.assign(t, { offset: 0, digest: {} });
     if (size === t.offset) return;
     const fh = await fs.open(t.file!, 'r');
     try {
       if (t.offset === 0 && size > TAIL_BYTES) {
-        // First look at a long transcript: titles are re-written often, so
-        // the newest one is near the end. Read backwards until one turns up.
-        for (let end = size; end > 0 && size - end < MAX_BACK_BYTES; end -= TAIL_BYTES) {
-          const start = Math.max(0, end - TAIL_BYTES);
-          const found = parseTitles((await readRange(fh, start, end)).toString('utf8'));
-          t.titles = { customTitle: t.titles.customTitle ?? found.customTitle, aiTitle: t.titles.aiTitle ?? found.aiTitle };
-          if (t.titles.customTitle || t.titles.aiTitle) break;
+        // First look at a long transcript: what matters is near the end.
+        // Read backwards until a title and a reply turn up. Each chunk ends
+        // where a line starts, so no line is cut in two; a line longer than
+        // a chunk makes the next read reach twice as far back.
+        let offset: number | undefined;
+        let span = TAIL_BYTES;
+        for (let end = size, n = 0; end > 0 && size - end < MAX_BACK_BYTES && span <= MAX_BACK_BYTES && n < 64; n++) {
+          const start = Math.max(0, end - span);
+          let buf = await readRange(fh, start, end);
+          if (offset === undefined) {
+            const nl = buf.lastIndexOf(0x0a);
+            if (nl < 0 && start > 0) {
+              span *= 2;
+              continue;
+            }
+            // The newest line may still be being written; the next look reads it.
+            offset = start + nl + 1;
+            end = offset;
+            buf = buf.subarray(0, nl + 1);
+          }
+          const cut = start > 0 ? buf.indexOf(0x0a) + 1 : 0;
+          if (start > 0 && (cut === 0 || cut >= buf.length)) {
+            span *= 2;
+            continue;
+          }
+          t.digest = readChunk(buf.subarray(cut).toString('utf8'), start + cut, t.digest);
+          if ((t.digest.customTitle || t.digest.aiTitle) && t.digest.reply) break;
+          end = start + cut;
+          span = TAIL_BYTES;
         }
-        t.offset = size;
+        t.offset = offset ?? size;
         return;
       }
       // A transcript can grow a lot between two looks; the end is what matters.
@@ -184,7 +209,7 @@ export class SessionSource {
       const buf = await readRange(fh, start, size);
       const lastNewline = buf.lastIndexOf(0x0a);
       if (lastNewline < 0) return;
-      t.titles = parseTitles(buf.subarray(0, lastNewline).toString('utf8'), t.titles);
+      t.digest = readChunk(buf.subarray(0, lastNewline).toString('utf8'), start, t.digest);
       t.offset = start + lastNewline + 1;
     } finally {
       await fh.close();

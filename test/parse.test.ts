@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { displayTitle, lineage, parseAgentsJson, parsePs, parseTitles, projectSlug, toSession, withFileFields } from '../src/core/parse';
+import { displayTitle, lineage, parseAgentsJson, parsePs, projectSlug, toSession, withFileFields } from '../src/core/parse';
 import type { Session } from '../src/core/types';
 
 const cliInteractive = {
@@ -60,29 +60,14 @@ test("the status file's status and change time win over the CLI list", () => {
   assert.equal(withFileFields(cli, other), cli, 'a file for a reused pid is ignored');
 });
 
-test('parseTitles keeps the newest of each title and skips cut lines', () => {
-  const chunk = [
-    'ai-title","aiTitle":"cut off"}',
-    '{"type":"ai-title","aiTitle":"Old title","sessionId":"x"}',
-    '{"type":"user","message":"mentions \\"type\\":\\"ai-title\\" in text"}',
-    '{"type":"custom-title","customTitle":"My name","sessionId":"x"}',
-    '{"type":"ai-title","aiTitle":"New title","sessionId":"x"}',
-    '{"type":"ai-title","aiTi',
-  ].join('\n');
-  assert.deepEqual(parseTitles(chunk), { customTitle: 'My name', aiTitle: 'New title' });
-  assert.deepEqual(parseTitles('{"type":"ai-title","aiTitle":"Later"}', { aiTitle: 'Earlier', customTitle: 'Kept' }), {
-    aiTitle: 'Later',
-    customTitle: 'Kept',
-  });
-});
-
 test('displayTitle prefers a title the user set, then a chosen name, then the AI title', () => {
   const s: Session = toSession(cliInteractive)!;
   assert.equal(displayTitle(s, undefined), 'shop-22');
-  assert.equal(displayTitle(s, { aiTitle: 'Fix checkout' }), 'Fix checkout');
-  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { aiTitle: 'Fix checkout' }), 'Checkout');
-  assert.equal(displayTitle({ ...s, nameSource: 'peer', name: 'Probe' }, { aiTitle: 'x' }), 'Probe');
-  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { customTitle: 'Renamed', aiTitle: 'x' }), 'Renamed');
+  const at = (v: string) => ({ v, at: 0 });
+  assert.equal(displayTitle(s, { aiTitle: at('Fix checkout') }), 'Fix checkout');
+  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { aiTitle: at('Fix checkout') }), 'Checkout');
+  assert.equal(displayTitle({ ...s, nameSource: 'peer', name: 'Probe' }, { aiTitle: at('x') }), 'Probe');
+  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { customTitle: at('Renamed'), aiTitle: at('x') }), 'Renamed');
 });
 
 test('projectSlug matches how Claude Code names transcript folders', () => {

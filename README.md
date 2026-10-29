@@ -6,33 +6,30 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 
 > Not an official Anthropic product. Switchboard only reads the status files Claude Code writes on your machine.
 
-```
-SWITCHBOARD                                   + ✓ ↻
-▾ Needs you  1
-  🔔 Fix the login redirect        api · asks a question · 2 min
-▾ Finished  1
-  ✔ Upgrade the date library       web · finished · 4 min
-▾ Working  2
-  ◌ Write tests for the parser     cli · working · 31 min
-  ◌ Draft release notes            docs · working · 3 min · other window
-▾ Background  1
-  ▣ Nightly dependency check       web · idle · 1 h
-```
+<p>
+  <img src="docs/board-dark.png" alt="The Switchboard board in a dark theme, with sessions grouped as Needs you, Waiting for your reply, Start a new session, Stopped, Done, Working and Idle" width="300">
+  <img src="docs/board-light.png" alt="The same board in a light theme" width="300">
+</p>
+
+*The sessions in these pictures are made up.*
 
 ## What it does
 
-- **Groups every session**:
+- **A board of every session**, one coloured section per state:
   - **Needs you:** a permission prompt or a question is waiting.
-  - **Finished:** it stopped working and you haven't looked at it since.
+  - **Waiting for your reply:** Claude finished its turn by asking you something. The card quotes the question.
+  - **Start a new session:** Claude handed over with a kickoff prompt, or the context has grown past the new-session line (150k tokens by default).
+  - **Stopped:** the turn ended on an API error, or you interrupted it.
+  - **Done:** a normal final reply. The card shows Claude Code's own recap, or the reply's first paragraph.
   - **Working**
-  - **Idle**
-  - **Background:** sessions started with `claude --bg` or from agent view.
-- **Shows each session by its title**: the name you gave it, or else Claude's own title for it, never `my-repo-27`.
-- **Click to open.**
+  - **Idle:** nothing said yet.
+- **Each card shows** the session's title (the name you gave it, or else Claude's own title, never `my-repo-27`), its folder, how long ago it changed, and a context meter. A dot marks a turn that finished since you last looked.
+- **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
   - A background session opens with `claude attach` in a new tab.
-- **A status-bar counter**, e.g. `🔔 1 needs you · 1 finished`. It turns amber while something waits, and a click opens the sidebar.
-- **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more.
+- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message. **Copy prompt** copies it instead.
+- **A status-bar counter**, e.g. `🔔 1 needs you · 2 finished`. It turns amber while something waits, and a click opens the board.
+- **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more. They say how the turn ended.
   - There are none for the tab you're looking at.
   - With several VS Code windows open, only one window pops up: the one holding the tab, or the focused one for a session outside every window.
 - **New session (+)**: give it a name, a folder and a first task, and it opens a tab running `claude -n "<name>" "<task>"`.
@@ -41,9 +38,10 @@ SWITCHBOARD                                   + ✓ ↻
 
 1. Claude Code keeps a small status file per running session (`~/.claude/sessions/<pid>.json`): busy, waiting or idle. Switchboard watches that folder, so it does nothing while nothing changes.
 2. When a status file changes, Switchboard reads Claude Code's own session list (`claude agents --json`), adding each file's change time.
-3. Titles come from the end of each session's transcript, and only new lines are read after the first look.
+3. Titles, and how each turn ended, come from the end of each session's transcript: Claude's last reply, Claude Code's recap, the context size, a compaction or an error. Only new lines are read after the first look.
 4. A session is matched to its tab through the process tree: the session's parent process is the tab's shell.
 5. "Seen" marks live in the extension's storage folder, one small file per session, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
+6. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
 
 Nothing leaves your machine.
 
@@ -68,12 +66,14 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.popups.needsYou` | `true` | Pop up when a session starts waiting for you. |
 | `switchboard.popups.finished` | `true` | Pop up when a session finishes a turn. |
 | `switchboard.popups.finishedMinSeconds` | `30` | Only for turns at least this long. |
+| `switchboard.newSessionTokens` | `150000` | Suggest a new session once a finished session's context reaches this many tokens. `0` turns it off. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 
 ## Limits
 
 - `claude agents --json` is part of a research preview, so its format may change. If it fails, Switchboard reads the status files directly. A status it doesn't recognise shows as "status unknown", never as a guess.
+- "Waiting for your reply" and "Start a new session" are read from the words of Claude's last reply: a question in its last lines, or words such as "kickoff prompt" or "next session". The card always shows the words it went by, so you can judge.
 - A VS Code window can only bring forward its own tabs. A session in another window, or in another terminal app, is listed ("other window", "outside VS Code"), but a click can't jump there yet.
 - "Looking at it" means its terminal is the active one in a focused window. VS Code doesn't say whether the terminal panel itself is visible.
 - A session started by another session (by a hook or a tool) is listed as "inside another session" and has no tab of its own.

@@ -1,0 +1,321 @@
+/* The Switchboard board. Colours come from the user's VS Code theme; each
+   section has one accent, used for its icon, its card edge and its words. */
+
+:root {
+  --bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --fg: var(--vscode-foreground);
+  --muted: var(--vscode-descriptionForeground);
+  --line: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25)));
+  --radius: 6px;
+}
+
+.g-needs { --accent: var(--vscode-charts-orange, #d18616); }
+.g-reply { --accent: var(--vscode-charts-yellow, #cca700); }
+.g-handoff { --accent: var(--vscode-charts-purple, #b180d7); }
+.g-stopped { --accent: var(--vscode-charts-red, #f14c4c); }
+.g-done { --accent: var(--vscode-charts-green, #89d185); }
+.g-working { --accent: var(--vscode-charts-blue, #3794ff); }
+.g-idle { --accent: var(--vscode-disabledForeground, #8b8b8b); }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 10px 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  line-height: 1.4;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus { outline: none; }
+:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
+.glyph {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Words in the accent colour, pulled towards the text colour so they read on light and dark themes. */
+.state, .group-label, .pill .n {
+  color: color-mix(in srgb, var(--accent) 72%, var(--fg));
+}
+
+/* --- Summary strip -------------------------------------------------- */
+
+.summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 -10px;
+  padding: 10px 10px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.pill:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.pill .n { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.pill.has-unread .dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* --- Sections -------------------------------------------------------- */
+
+.group { margin-top: 12px; }
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 2px 4px;
+  text-align: left;
+}
+.group-head .glyph { width: 13px; height: 13px; }
+.group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.group-head .count {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.chev {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--muted);
+  transition: transform 0.12s;
+}
+.chev.folded { transform: rotate(-90deg); }
+
+.cards { display: flex; flex-direction: column; gap: 6px; }
+
+/* --- Cards ----------------------------------------------------------- */
+
+.card {
+  position: relative;
+  padding: 8px 10px 8px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.card:hover {
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.card.unread { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.card.unread:hover { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); }
+
+/* Seen, finished cards step back so the ones that need a look stand out. */
+.card.g-done:not(.unread), .card.g-idle { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+.card.g-done:not(.unread) .title, .card.g-idle .title { font-weight: 500; }
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card.unread .title { font-weight: 700; }
+.card.unread .title::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.age {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.seen {
+  flex: none;
+  display: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  align-items: center;
+  justify-content: center;
+}
+.card:hover .seen, .card:focus-within .seen { display: inline-flex; }
+.seen:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.tick { width: 14px; height: 14px; fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 3px 0 0 22px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.state { font-weight: 600; }
+.folder { display: inline-flex; align-items: center; gap: 4px; }
+.fold { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; opacity: 0.85; }
+.chip {
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.ctx .bar {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+}
+.ctx .bar i {
+  display: block;
+  width: var(--fill, 0%);
+  height: 100%;
+  border-radius: 2px;
+  background: var(--meter);
+}
+.ctx.low { --meter: var(--vscode-charts-green, #89d185); }
+.ctx.mid { --meter: var(--vscode-charts-yellow, #cca700); }
+.ctx.high { --meter: var(--vscode-charts-red, #f14c4c); color: color-mix(in srgb, var(--meter) 70%, var(--fg)); font-weight: 600; }
+
+.detail {
+  margin: 5px 0 0 22px;
+  font-size: 12px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.detail.quote {
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--fg);
+  font-style: italic;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0 22px;
+}
+.btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+}
+.btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.btn.primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.btn.primary:hover { background: var(--vscode-button-hoverBackground); }
+
+/* --- Motion: working spins, a waiting card breathes ------------------- */
+
+.card.g-working .glyph { animation: spin 1.1s linear infinite; }
+.card.g-needs { animation: breathe 2.4s ease-in-out infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes breathe {
+  50% { border-color: color-mix(in srgb, var(--accent) 65%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card.g-working .glyph, .card.g-needs { animation: none; }
+}
+
+/* --- Empty board ------------------------------------------------------ */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 36px 12px;
+  text-align: center;
+}
+.empty .glyph { width: 28px; height: 28px; margin-bottom: 6px; --accent: var(--muted); }
+.empty-title { margin: 0; font-weight: 600; }
+.empty-hint { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+
+/* High contrast: plain borders instead of tints. */
+body.vscode-high-contrast .card, body.vscode-high-contrast-light .card {
+  background: var(--bg);
+  border-color: var(--vscode-contrastBorder);
+}

@@ -1,7 +1,7 @@
 {
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
-  "description": "A sidebar of every Claude Code session on this machine: who needs you, who finished, who is working. Click one to jump to its terminal tab.",
+  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done. Click one to jump to its terminal tab.",
   "version": "0.1.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
@@ -23,7 +23,8 @@
     "claude code",
     "sessions",
     "terminal",
-    "agents"
+    "agents",
+    "board"
   ],
   "main": "./out/src/extension.js",
   "activationEvents": [
@@ -51,17 +52,12 @@
     "views": {
       "switchboard": [
         {
+          "type": "webview",
           "id": "switchboard.sessions",
           "name": "Sessions"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "switchboard.sessions",
-        "contents": "No Claude Code sessions are running on this machine.\n[New session](command:switchboard.newSession)"
-      }
-    ],
     "commands": [
       {
         "command": "switchboard.newSession",
@@ -77,7 +73,7 @@
       },
       {
         "command": "switchboard.markAllSeen",
-        "title": "Mark All Finished as Seen",
+        "title": "Mark All as Read",
         "category": "Switchboard",
         "icon": "$(check-all)"
       },
@@ -88,12 +84,12 @@
       },
       {
         "command": "switchboard.markSeen",
-        "title": "Mark as Seen",
+        "title": "Mark as Read",
         "category": "Switchboard"
       },
       {
-        "command": "switchboard.copySessionId",
-        "title": "Copy Session ID",
+        "command": "switchboard.startNext",
+        "title": "Start the Next Session",
         "category": "Switchboard"
       }
     ],
@@ -106,25 +102,13 @@
         },
         {
           "command": "switchboard.markAllSeen",
-          "when": "view == switchboard.sessions && switchboard.hasFinished",
+          "when": "view == switchboard.sessions && switchboard.hasUnread",
           "group": "navigation@2"
         },
         {
           "command": "switchboard.refresh",
           "when": "view == switchboard.sessions",
           "group": "navigation@3"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "switchboard.markSeen",
-          "when": "view == switchboard.sessions && viewItem =~ /^session\\.finished/",
-          "group": "1_session@1"
-        },
-        {
-          "command": "switchboard.copySessionId",
-          "when": "view == switchboard.sessions && viewItem =~ /^session\\./",
-          "group": "1_session@2"
         }
       ],
       "commandPalette": [
@@ -137,7 +121,7 @@
           "when": "false"
         },
         {
-          "command": "switchboard.copySessionId",
+          "command": "switchboard.startNext",
           "when": "false"
         }
       ]
@@ -160,6 +144,12 @@
           "default": 30,
           "minimum": 0,
           "description": "Only pop up for finished turns that ran at least this many seconds."
+        },
+        "switchboard.newSessionTokens": {
+          "type": "number",
+          "default": 150000,
+          "minimum": 0,
+          "description": "Suggest starting a new session once a finished session's context reaches this many tokens. 0 turns it off. A reply that hands over with a kickoff prompt is always suggested."
         },
         "switchboard.statusBar.enabled": {
           "type": "boolean",

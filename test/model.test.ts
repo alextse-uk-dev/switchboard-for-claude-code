@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { counterText, formatAge, groupOf, shouldPop, Tracker, type PopContext } from '../src/core/model';
+import { counterText, formatAge, formatTokens, groupOf, isUnread, noLinks, popText, shouldPop, Tracker, type PopContext } from '../src/core/model';
 import type { Group, Session, Status } from '../src/core/types';
 
 function session(status: Status, statusUpdatedAt?: number, extra: Partial<Session> = {}): Session {
@@ -70,21 +70,24 @@ test('two processes resuming one conversation are tracked apart', () => {
   assert.equal(t.changedAt('2:a'), 5);
 });
 
-test('groupOf: waiting needs you; idle since your last look is finished', () => {
-  assert.equal(groupOf(session('waiting'), 10, 50), 'needs');
-  assert.equal(groupOf(session('idle'), 60, 50), 'finished');
-  assert.equal(groupOf(session('idle'), 40, 50), 'idle');
-  assert.equal(groupOf(session('idle'), 60, undefined), 'idle');
-  assert.equal(groupOf(session('busy'), 60, 50), 'working');
-  assert.equal(groupOf(session('unknown'), 60, 50), 'idle');
+test('groupOf: waiting needs you, busy works, idle goes where its outcome says', () => {
+  assert.equal(groupOf(session('waiting'), { kind: 'done' }), 'needs');
+  assert.equal(groupOf(session('busy'), undefined), 'working');
+  assert.equal(groupOf(session('idle'), { kind: 'done' }), 'done');
+  assert.equal(groupOf(session('idle'), { kind: 'question', ask: 'Push it?' }), 'reply');
+  assert.equal(groupOf(session('idle'), { kind: 'handoff', reason: 'kickoff' }), 'handoff');
+  assert.equal(groupOf(session('idle'), { kind: 'stopped', why: 'error' }), 'stopped');
+  assert.equal(groupOf(session('idle'), { kind: 'blank' }), 'idle');
+  assert.equal(groupOf(session('idle'), undefined), 'idle', 'no transcript read yet');
+  assert.equal(groupOf(session('unknown'), { kind: 'done' }), 'idle');
+  assert.equal(groupOf(session('idle', undefined, { kind: 'background' }), { kind: 'done' }), 'done');
 });
 
-test('groupOf: background sessions have their own group unless they need you or finished', () => {
-  const bg = (st: Status) => session(st, undefined, { kind: 'background' });
-  assert.equal(groupOf(bg('busy'), 60, 50), 'background');
-  assert.equal(groupOf(bg('idle'), 40, 50), 'background');
-  assert.equal(groupOf(bg('idle'), 60, 50), 'finished');
-  assert.equal(groupOf(bg('waiting'), 60, 50), 'needs');
+test('isUnread: an idle turn that ended after your last look', () => {
+  assert.equal(isUnread(session('idle'), 60, 50), true);
+  assert.equal(isUnread(session('idle'), 40, 50), false);
+  assert.equal(isUnread(session('idle'), 60, undefined), false, 'never met: not flagged');
+  assert.equal(isUnread(session('busy'), 60, 50), false);
 });
 
 const ctx: PopContext = {
@@ -127,10 +130,34 @@ test('formatAge', () => {
 });
 
 test('counterText', () => {
-  const c = (o: Partial<Record<Group, number>>) => ({ needs: 0, finished: 0, working: 0, idle: 0, background: 0, ...o });
-  assert.equal(counterText(c({ needs: 1, finished: 2, working: 3 })), '1 needs you · 2 finished');
-  assert.equal(counterText(c({ needs: 2 })), '2 need you');
-  assert.equal(counterText(c({ working: 3, idle: 1 })), '3 working');
-  assert.equal(counterText(c({ idle: 1, background: 2 })), '3 idle');
-  assert.equal(counterText(c({})), '');
+  const c = (o: Partial<Record<Group, number>>) => ({ needs: 0, reply: 0, handoff: 0, stopped: 0, done: 0, working: 0, idle: 0, ...o });
+  assert.equal(counterText(c({ needs: 1, done: 2, working: 3 }), 2), '1 needs you · 2 finished');
+  assert.equal(counterText(c({ needs: 2 }), 0), '2 need you');
+  assert.equal(counterText(c({ working: 3, done: 1 }), 0), '3 working');
+  assert.equal(counterText(c({ done: 1, reply: 1, idle: 1 }), 0), '3 idle');
+  assert.equal(counterText(c({}), 0), '');
+});
+
+test('formatTokens', () => {
+  assert.equal(formatTokens(950), '950');
+  assert.equal(formatTokens(4_000), '4k');
+  assert.equal(formatTokens(4_260), '4.3k');
+  assert.equal(formatTokens(182_412), '182k');
+});
+
+test('popText says how the turn ended', () => {
+  const e = done(240_000);
+  assert.equal(popText(needs, 'Fix login', undefined), 'Fix login needs you (waiting for you).');
+  assert.equal(popText({ ...needs, session: session('waiting', 1, { waitingFor: 'input needed' }) }, 'Fix login', undefined), 'Fix login needs you (asks a question).');
+  assert.equal(popText(e, 'Fix login', { kind: 'done' }), 'Fix login finished after 4 min.');
+  assert.equal(popText(e, 'Fix login', { kind: 'question', ask: 'Push it?' }), 'Fix login is waiting for your reply: "Push it?"');
+  assert.match(popText(e, 'Fix login', { kind: 'handoff', reason: 'kickoff', prompt: 'Read NOTES.md' }), /kickoff prompt/);
+  assert.match(popText(e, 'Fix login', { kind: 'handoff', reason: 'context' }), /start a new session/);
+  assert.equal(popText(e, 'Fix login', { kind: 'stopped', why: 'error', text: 'API Error: 529' }), 'Fix login stopped on an error: API Error: 529');
+});
+
+test('pop-up text never carries a working link', () => {
+  const t = popText(done(60_000), 'T', { kind: 'question', ask: 'Run it? [Yes](command:workbench.action.reloadWindow)' });
+  assert.doesNotMatch(t, /\]\(/);
+  assert.equal(noLinks('[a] (b)'), '[a]\u200b(b)');
 });

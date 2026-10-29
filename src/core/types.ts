@@ -29,19 +29,36 @@ export function keyOf(s: Pick<Session, 'pid' | 'sessionId'>): string {
   return `${s.pid}:${s.sessionId}`;
 }
 
-export type Group = 'needs' | 'finished' | 'working' | 'idle' | 'background';
+/**
+ * The board's sections, in the order they show. Every idle session lands in
+ * the one that says what to do with it next.
+ */
+export type Group = 'needs' | 'reply' | 'handoff' | 'stopped' | 'done' | 'working' | 'idle';
 
-export const GROUP_ORDER: readonly Group[] = ['needs', 'finished', 'working', 'idle', 'background'];
+export const GROUP_ORDER: readonly Group[] = ['needs', 'reply', 'handoff', 'stopped', 'done', 'working', 'idle'];
 
 export const GROUP_LABEL: Record<Group, string> = {
   needs: 'Needs you',
-  finished: 'Finished',
+  reply: 'Waiting for your reply',
+  handoff: 'Start a new session',
+  stopped: 'Stopped',
+  done: 'Done',
   working: 'Working',
   idle: 'Idle',
-  background: 'Background',
 };
 
-export interface Titles {
-  customTitle?: string;
-  aiTitle?: string;
-}
+/**
+ * How an idle session's last turn ended, read from its transcript:
+ * - done: a normal final reply;
+ * - question: the reply ends by asking the user something;
+ * - handoff: the reply hands over to a new session (a kickoff prompt), or the
+ *   context has grown past the new-session line;
+ * - stopped: an API error, or the user interrupted it;
+ * - blank: nothing has been said yet.
+ */
+export type Outcome =
+  | { kind: 'done' }
+  | { kind: 'question'; ask: string }
+  | { kind: 'handoff'; reason: 'kickoff' | 'context'; prompt?: string; line?: string }
+  | { kind: 'stopped'; why: 'error' | 'interrupted'; text?: string }
+  | { kind: 'blank' };
