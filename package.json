@@ -1,0 +1,180 @@
+{
+  "name": "switchboard-for-claude-code",
+  "displayName": "Switchboard for Claude Code",
+  "description": "A sidebar of every Claude Code session on this machine: who needs you, who finished, who is working. Click one to jump to its terminal tab.",
+  "version": "0.1.0",
+  "publisher": "alextse-uk-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alextse-uk-dev/switchboard-for-claude-code"
+  },
+  "bugs": {
+    "url": "https://github.com/alextse-uk-dev/switchboard-for-claude-code/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "sessions",
+    "terminal",
+    "agents"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "switchboard",
+          "title": "Switchboard",
+          "icon": "media/switchboard.svg"
+        }
+      ]
+    },
+    "views": {
+      "switchboard": [
+        {
+          "id": "switchboard.sessions",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "switchboard.sessions",
+        "contents": "No Claude Code sessions are running on this machine.\n[New session](command:switchboard.newSession)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "switchboard.newSession",
+        "title": "New Claude Code Session",
+        "category": "Switchboard",
+        "icon": "$(add)"
+      },
+      {
+        "command": "switchboard.refresh",
+        "title": "Refresh",
+        "category": "Switchboard",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "switchboard.markAllSeen",
+        "title": "Mark All Finished as Seen",
+        "category": "Switchboard",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "switchboard.open",
+        "title": "Open Session",
+        "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.markSeen",
+        "title": "Mark as Seen",
+        "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.copySessionId",
+        "title": "Copy Session ID",
+        "category": "Switchboard"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "switchboard.newSession",
+          "when": "view == switchboard.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "switchboard.markAllSeen",
+          "when": "view == switchboard.sessions && switchboard.hasFinished",
+          "group": "navigation@2"
+        },
+        {
+          "command": "switchboard.refresh",
+          "when": "view == switchboard.sessions",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "switchboard.markSeen",
+          "when": "view == switchboard.sessions && viewItem =~ /^session\\.finished/",
+          "group": "1_session@1"
+        },
+        {
+          "command": "switchboard.copySessionId",
+          "when": "view == switchboard.sessions && viewItem =~ /^session\\./",
+          "group": "1_session@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "switchboard.open",
+          "when": "false"
+        },
+        {
+          "command": "switchboard.markSeen",
+          "when": "false"
+        },
+        {
+          "command": "switchboard.copySessionId",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Switchboard",
+      "properties": {
+        "switchboard.popups.needsYou": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a pop-up when a session starts waiting for you (a permission prompt or a question)."
+        },
+        "switchboard.popups.finished": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a pop-up when a session finishes a turn while you are looking elsewhere."
+        },
+        "switchboard.popups.finishedMinSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Only pop up for finished turns that ran at least this many seconds."
+        },
+        "switchboard.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the session counter in the status bar."
+        },
+        "switchboard.claudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the claude command. Leave empty to find it on PATH or in ~/.local/bin."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "tsc -p . && node --test \"out/test/*.test.js\"",
+    "package": "npm run test && vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "~5.9.3"
+  }
+}
