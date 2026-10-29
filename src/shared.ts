@@ -33,12 +33,13 @@ export interface Peers {
 
 /**
  * State every VS Code window shares, kept in the extension's global storage
- * folder: when the user last looked at each session (`seen.json`), which
+ * folder: when the user last looked at each session (`seen/<session id>`,
+ * one file each, so two windows never rewrite each other's marks), which
  * sessions each window holds and when it was last focused
  * (`windows/<id>.json`), and which pop-ups have been shown (`claims/`).
  */
 export class SharedState {
-  readonly seenFile: string;
+  readonly seenDir: string;
   private readonly windowsDir: string;
   private readonly claimsDir: string;
   private readonly ownFile: string;
@@ -50,15 +51,14 @@ export class SharedState {
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(readonly dir: string, windowId: string) {
-    this.seenFile = path.join(dir, 'seen.json');
+    this.seenDir = path.join(dir, 'seen');
     this.windowsDir = path.join(dir, 'windows');
     this.claimsDir = path.join(dir, 'claims');
     this.ownFile = path.join(this.windowsDir, `${windowId}.json`);
   }
 
   async init(now: number): Promise<void> {
-    await fs.mkdir(this.windowsDir, { recursive: true });
-    await fs.mkdir(this.claimsDir, { recursive: true });
+    for (const d of [this.seenDir, this.windowsDir, this.claimsDir]) await fs.mkdir(d, { recursive: true });
     await this.loadSeen();
     for (const n of await fs.readdir(this.claimsDir).catch(() => [] as string[])) {
       const file = path.join(this.claimsDir, n);
@@ -75,17 +75,18 @@ export class SharedState {
 
   /**
    * Re-reads the seen marks, e.g. after another window wrote them. Marks are
-   * merged, newest wins, so a write that raced ours loses nothing here.
+   * merged, newest wins, so nothing this window knows is lost.
    */
   async loadSeen(): Promise<void> {
-    try {
-      const data = JSON.parse(await fs.readFile(this.seenFile, 'utf8')) as { seen?: Record<string, unknown> };
-      for (const [id, at] of Object.entries(data.seen ?? {})) {
-        if (typeof at === 'number' && (this.seen.get(id) ?? -Infinity) < at) this.seen.set(id, at);
-      }
-    } catch {
-      // No file yet, or one being replaced; keep what we have.
-    }
+    const names = await fs.readdir(this.seenDir).catch(() => [] as string[]);
+    await Promise.all(
+      names
+        .filter((n) => !n.endsWith('.tmp'))
+        .map(async (id) => {
+          const at = Number(await fs.readFile(path.join(this.seenDir, id), 'utf8').catch(() => ''));
+          if (Number.isFinite(at) && at > 0 && (this.seen.get(id) ?? -Infinity) < at) this.seen.set(id, at);
+        }),
+    );
   }
 
   seenAt(sessionId: string): number | undefined {
@@ -95,18 +96,21 @@ export class SharedState {
   /** Records that the user looked at these sessions. Resolves true if anything moved forward. */
   markSeen(entries: ReadonlyArray<readonly [string, number]>, now: number): Promise<boolean> {
     return this.serial(async () => {
-      await this.loadSeen();
       let changed = false;
       for (const [id, at] of entries) {
-        if ((this.seen.get(id) ?? -Infinity) < at) {
-          this.seen.set(id, at);
-          changed = true;
+        if (!/^[A-Za-z0-9-]+$/.test(id) || (this.seen.get(id) ?? -Infinity) >= at) continue;
+        this.seen.set(id, at);
+        await writeAtomic(path.join(this.seenDir, id), String(at));
+        changed = true;
+      }
+      if (changed) {
+        for (const [id, at] of this.seen) {
+          if (now - at <= KEEP_MS) continue;
+          this.seen.delete(id);
+          await fs.rm(path.join(this.seenDir, id), { force: true });
         }
       }
-      if (!changed) return false;
-      for (const [id, at] of this.seen) if (now - at > KEEP_MS) this.seen.delete(id);
-      await writeAtomic(this.seenFile, JSON.stringify({ v: 1, seen: Object.fromEntries(this.seen) }));
-      return true;
+      return changed;
     });
   }
 

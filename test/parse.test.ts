@@ -40,6 +40,7 @@ test('skips spare sessions, other kinds and broken records', () => {
 
 test('an unrecognised status reads as unknown, and waitingFor only counts while waiting', () => {
   assert.equal(toSession({ ...cliInteractive, status: 'thinking' })?.status, 'unknown');
+  assert.equal(toSession({ ...cliInteractive, status: 'shell' })?.status, 'busy');
   assert.equal(toSession({ ...cliInteractive, status: 'idle', waitingFor: 'input needed' })?.waitingFor, undefined);
   assert.equal(toSession({ ...cliInteractive, status: 'waiting', waitingFor: 'input needed' })?.waitingFor, 'input needed');
 });
@@ -52,6 +53,9 @@ test("the status file's status and change time win over the CLI list", () => {
   assert.equal(merged.waitingFor, 'dialog open');
   assert.equal(merged.statusUpdatedAt, 5000);
   assert.equal(merged.nameSource, 'user');
+  const odd = withFileFields(cli, toSession({ ...cliInteractive, status: 'thinking', statusUpdatedAt: 7000 }));
+  assert.equal(odd.status, 'busy', "the CLI's status stands when the file's is unknown");
+  assert.equal(odd.statusUpdatedAt, 7000);
   const other = toSession({ ...cliInteractive, sessionId: 'another', status: 'idle' })!;
   assert.equal(withFileFields(cli, other), cli, 'a file for a reused pid is ignored');
 });

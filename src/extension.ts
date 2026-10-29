@@ -57,6 +57,8 @@ class Board implements vscode.Disposable {
   private sessions: Session[] = [];
   private titles = new Map<string, Titles>();
   private tabs = new Map<string, vscode.Terminal>();
+  /** Sessions run from inside another session's process, by key. */
+  private nested = new Set<string>();
   private peers: Peers = { owned: new Set(), focusedAt: 0 };
   private rows = new Map<string, Row>();
 
@@ -111,9 +113,7 @@ class Board implements vscode.Disposable {
       }),
     );
     this.watch(this.source.sessionsDir, () => this.schedule());
-    this.watch(this.shared.dir, (file) => {
-      if (file === path.basename(this.shared.seenFile)) void this.shared.loadSeen().then(() => this.render());
-    });
+    this.watch(this.shared.seenDir, () => void this.shared.loadSeen().then(() => this.render()));
     this.tick = setInterval(() => {
       if (this.view.visible || vscode.window.state.focused) this.schedule();
     }, TICK_MS);
@@ -143,9 +143,10 @@ class Board implements vscode.Disposable {
 
   private claudePath(): Promise<string | undefined> {
     if (!this.claude) {
-      const configured = vscode.workspace.getConfiguration('switchboard').get<string>('claudePath', '');
+      // User settings only: a workspace must never choose what this runs.
+      const configured = vscode.workspace.getConfiguration('switchboard').inspect<string>('claudePath')?.globalValue ?? '';
       this.claude = findClaude(configured).then((p) => {
-        if (!p) this.log.warn('Could not find the claude command. Set switchboard.claudePath.');
+        if (!p) this.log.warn('Could not find the claude command. Set switchboard.claudePath (an absolute path) in your user settings.');
         return p;
       });
     }
@@ -218,10 +219,22 @@ class Board implements vscode.Disposable {
     );
     const interactive = sessions.filter((s) => s.kind === 'interactive');
     const lines = await this.source.lineages(interactive.map((s) => s.pid));
+    const sessionPids = new Set(sessions.map((s) => s.pid));
     const tabs = new Map<string, vscode.Terminal>();
+    this.nested = new Set();
     for (const s of interactive) {
-      const tab = (lines.get(s.pid) ?? [s.pid]).map((p) => byShell.get(p)).find((t) => t !== undefined);
-      if (tab) tabs.set(keyOf(s), tab);
+      for (const [i, p] of (lines.get(s.pid) ?? [s.pid]).entries()) {
+        // A session started by another one (a hook, a tool) is not that session's tab.
+        if (i > 0 && sessionPids.has(p)) {
+          this.nested.add(keyOf(s));
+          break;
+        }
+        const tab = byShell.get(p);
+        if (tab) {
+          tabs.set(keyOf(s), tab);
+          break;
+        }
+      }
     }
     for (const [key, t] of this.attachTabs) {
       if (vscode.window.terminals.includes(t)) tabs.set(key, t);
@@ -259,6 +272,7 @@ class Board implements vscode.Disposable {
 
   private where(key: string): Where {
     if (this.tabs.has(key)) return 'here';
+    if (this.nested.has(key)) return 'nested';
     return this.peers.owned.has(key) ? 'elsewhere' : 'outside';
   }
 
@@ -343,6 +357,8 @@ class Board implements vscode.Disposable {
       const t = this.shellTab(row.title, row.s.cwd, command, 'server-process');
       this.attachTabs.set(key, t);
       t.show(false);
+    } else if (row.where === 'nested') {
+      void vscode.window.showInformationMessage(`"${row.title}" was started by another Claude Code session (a hook or a tool), so it has no tab of its own.`);
     } else if (row.where === 'elsewhere') {
       void vscode.window.showInformationMessage(`"${row.title}" runs in another VS Code window. Switch to that window to open it.`);
     } else {

@@ -43,7 +43,7 @@ SWITCHBOARD                                   + ✓ ↻
 2. When a status file changes, Switchboard reads Claude Code's own session list (`claude agents --json`), adding each file's change time.
 3. Titles come from the end of each session's transcript, and only new lines are read after the first look.
 4. A session is matched to its tab through the process tree: the session's parent process is the tab's shell.
-5. "Seen" marks live in the extension's storage folder, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
+5. "Seen" marks live in the extension's storage folder, one small file per session, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
 
 Nothing leaves your machine.
 
@@ -69,13 +69,14 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.popups.finished` | `true` | Pop up when a session finishes a turn. |
 | `switchboard.popups.finishedMinSeconds` | `30` | Only for turns at least this long. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
-| `switchboard.claudePath` | `""` | Path to `claude` if it isn't on PATH or in `~/.local/bin`. |
+| `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 
 ## Limits
 
 - `claude agents --json` is part of a research preview, so its format may change. If it fails, Switchboard reads the status files directly. A status it doesn't recognise shows as "status unknown", never as a guess.
 - A VS Code window can only bring forward its own tabs. A session in another window, or in another terminal app, is listed ("other window", "outside VS Code"), but a click can't jump there yet.
 - "Looking at it" means its terminal is the active one in a focused window. VS Code doesn't say whether the terminal panel itself is visible.
+- A session started by another session (by a hook or a tool) is listed as "inside another session" and has no tab of its own.
 - macOS and Linux only for now (it uses `ps` to read the process tree).
 
 ## Development

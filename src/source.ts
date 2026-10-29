@@ -11,10 +11,15 @@ export function claudeConfigDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 }
 
-/** The claude command: the configured path, else the first one on PATH or in the usual install folders. */
+/**
+ * The claude command: the configured path, else the first one on PATH or in
+ * the usual install folders. A configured path must be absolute (after `~`).
+ */
 export async function findClaude(configured: string): Promise<string | undefined> {
+  const expanded = configured.replace(/^~(?=$|\/)/, os.homedir());
+  if (configured && !path.isAbsolute(expanded)) return undefined;
   const candidates = configured
-    ? [configured.replace(/^~(?=$|\/)/, os.homedir())]
+    ? [expanded]
     : [
         ...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map((d) => path.join(d, 'claude')),
         path.join(os.homedir(), '.local', 'bin', 'claude'),

@@ -4,7 +4,7 @@ import { compareInGroup, formatAge, waitingLabel } from './core/model';
 import { GROUP_LABEL, GROUP_ORDER, keyOf, type Group, type Session } from './core/types';
 
 /** Where a session's terminal is, seen from this window. */
-export type Where = 'here' | 'elsewhere' | 'outside';
+export type Where = 'here' | 'elsewhere' | 'outside' | 'nested';
 
 export interface Row {
   s: Session;
@@ -41,6 +41,7 @@ function stateWord(r: Row): string {
 
 function whereWord(r: Row): string | undefined {
   if (r.s.kind === 'background') return r.group === 'background' ? undefined : 'background';
+  if (r.where === 'nested') return 'inside another session';
   if (r.where === 'elsewhere') return 'other window';
   if (r.where === 'outside') return 'outside VS Code';
   return undefined;

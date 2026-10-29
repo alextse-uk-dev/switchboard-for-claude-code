@@ -23,7 +23,10 @@ export function toSession(o: unknown): Session | undefined {
   const cwd = str(r.cwd);
   const kind = kindOf(r.kind);
   if (pid === undefined || !sessionId || !cwd || !kind || r.spare === true) return undefined;
-  const status: Status = typeof r.status === 'string' && STATUSES.has(r.status) ? (r.status as Status) : 'unknown';
+  // "shell": at the prompt while a background task of its own still runs.
+  // Agent view counts it as working, and so do we.
+  const raw = r.status === 'shell' ? 'busy' : r.status;
+  const status: Status = typeof raw === 'string' && STATUSES.has(raw) ? (raw as Status) : 'unknown';
   return {
     pid,
     sessionId,
@@ -49,7 +52,8 @@ export function parseAgentsJson(text: string): Session[] {
 /**
  * Lays a session's own status file over its entry in the CLI list. The file
  * is written the moment the status changes, so its status and its
- * `statusUpdatedAt` are the freshest; the CLI decides which sessions exist.
+ * `statusUpdatedAt` are the freshest; the CLI decides which sessions exist,
+ * and its status stands when the file's is one we don't know.
  */
 export function withFileFields(s: Session, file: Session | undefined): Session {
   if (!file || file.sessionId !== s.sessionId) return s;
@@ -57,8 +61,7 @@ export function withFileFields(s: Session, file: Session | undefined): Session {
     ...s,
     attachId: s.attachId ?? (s.kind === 'background' ? file.attachId : undefined),
     nameSource: file.nameSource ?? s.nameSource,
-    status: file.status,
-    waitingFor: file.waitingFor,
+    ...(file.status !== 'unknown' && { status: file.status, waitingFor: file.waitingFor }),
     statusUpdatedAt: file.statusUpdatedAt,
   };
 }

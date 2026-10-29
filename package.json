@@ -29,6 +29,15 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "The path to the claude command is only read from user settings.",
+      "restrictedConfigurations": [
+        "switchboard.claudePath"
+      ]
+    }
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -160,7 +169,8 @@
         "switchboard.claudePath": {
           "type": "string",
           "default": "",
-          "description": "Path to the claude command. Leave empty to find it on PATH or in ~/.local/bin."
+          "description": "Absolute path to the claude command. Leave empty to find it on PATH or in ~/.local/bin. Only read from user settings, never from a workspace.",
+          "scope": "machine"
         }
       }
     }
