@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BoardView, type FromBoard, type TodoView } from './board';
+import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks';
 import { toCard, type Card, type Where } from './core/card';
 import { EFFORTS, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
 import { modelName } from './core/cost';
@@ -57,6 +58,52 @@ function quickPick<T extends vscode.QuickPickItem>(items: T[], o: { title: strin
       done = true;
       resolve(qp.selectedItems[0] ?? qp.activeItems[0]);
       qp.hide();
+    });
+    qp.onDidHide(() => {
+      if (!done) resolve(undefined);
+      qp.dispose();
+    });
+    qp.show();
+  });
+}
+
+/**
+ * One slot's answer: pick a choice, or type straight into the list. A choice
+ * that wants the user's own words ("what's wrong") opens a box for them.
+ */
+function askBlank(b: Blank, context: string, title: string): Promise<string | undefined> {
+  type Item = vscode.QuickPickItem & { answer?: string; open?: string };
+  const fixed: Item[] = b.choices.map((c) =>
+    c.open ? { label: `$(edit) ${c.label}…`, description: 'in your own words', open: c.label } : { label: c.label, answer: c.label },
+  );
+  return new Promise((resolve) => {
+    const qp = vscode.window.createQuickPick<Item>();
+    qp.title = title;
+    qp.placeholder = `Pick, or type your answer: ${context}`;
+    qp.ignoreFocusOut = true;
+    qp.items = fixed;
+    qp.onDidChangeValue((v) => {
+      const t = v.trim();
+      qp.items = t ? [{ label: t, description: 'your answer', alwaysShow: true, answer: t }, ...fixed] : fixed;
+    });
+    let done = false;
+    qp.onDidAccept(() => {
+      const pick = qp.selectedItems[0] ?? qp.activeItems[0];
+      if (!pick) return;
+      done = true;
+      qp.hide();
+      if (pick.answer !== undefined) {
+        resolve(pick.answer);
+        return;
+      }
+      void vscode.window
+        .showInputBox({
+          title,
+          prompt: `${pick.open ?? b.text}: your words go in the prompt in place of <${b.text}>.`,
+          ignoreFocusOut: true,
+          validateInput: (v) => (v.trim() ? undefined : 'Type an answer, or press Escape to start nothing.'),
+        })
+        .then((v) => resolve(v?.trim() || undefined));
     });
     qp.onDidHide(() => {
       if (!done) resolve(undefined);
@@ -742,17 +789,23 @@ class Board implements vscode.Disposable {
       ignoreFocusOut: true,
     });
     if (task === undefined) return;
-    const choice = asks ? await this.chooseModel(cwd, (n) => step(3 + n)) : {};
+    // A pasted kickoff prompt may still have a slot for the user's answer.
+    const blanks = findBlanks(task).length;
+    const at = (n: number) => `New Claude Code session (${n}/${total + blanks})`;
+    const filled = blanks ? await this.fillPrompt(task, (i) => `${at(4 + i)}: fill in the first message`) : task;
+    if (filled === undefined) return;
+    const choice = asks ? await this.chooseModel(cwd, (n) => at(3 + blanks + n)) : {};
     if (!choice) return;
-    const l = { name, cwd, task, ...choice };
+    const l = { name, cwd, task: filled, ...choice };
     if (await this.confirmLaunch(l, 'Start this session?')) await this.launch(l);
   }
 
   /**
    * Starts the session that follows a hand-over: same folder, and the kickoff
-   * prompt as its first message. The model and effort come last, then a
-   * summary to confirm; the prompt comes from Claude's reply, so the user
-   * sees all of it there before anything runs.
+   * prompt as its first message. Any slot the prompt leaves for the user's
+   * answer is asked first, then the model and effort, then a summary to
+   * confirm; the prompt comes from Claude's reply, so the user sees all of
+   * it there before anything runs.
    */
   private async startNext(key: string | undefined): Promise<void> {
     const row = key ? this.rows.get(key) : undefined;
@@ -761,16 +814,36 @@ class Board implements vscode.Disposable {
     const folder = path.basename(row.s.cwd);
     // The next session carries on the same work, so it starts from the same model and effort.
     const same = { model: row.digest?.model?.v, effort: row.digest?.effort?.v };
-    const choice = config().get<boolean>('newSession.chooseModel', true)
-      ? await this.chooseModel(row.s.cwd, (n) => `Start the next session in ${folder} (${n}/2)`, same)
-      : same;
+    const asks = config().get<boolean>('newSession.chooseModel', true);
+    const blanks = prompt ? findBlanks(prompt).length : 0;
+    const step = (n: number) => `Start the next session in ${folder} (${n}/${blanks + (asks ? 2 : 0)})`;
+    const task = prompt && blanks ? await this.fillPrompt(prompt, (i) => `${step(1 + i)}: fill in the kickoff prompt`) : prompt ?? '';
+    if (task === undefined) return;
+    const choice = asks ? await this.chooseModel(row.s.cwd, (n) => step(blanks + n), same) : same;
     if (!choice) return;
-    const l = { name: row.title, cwd: row.s.cwd, task: prompt ?? '', ...choice };
+    const l = { name: row.title, cwd: row.s.cwd, task, ...choice };
     const earlier = row.outcome?.kind === 'handoff' && row.outcome.earlier;
-    const firstFrom = prompt ? `the kickoff prompt from ${earlier ? 'an earlier reply in ' : ''}"${row.title}"` : undefined;
+    const filledIn = blanks ? `, with your answer${blanks > 1 ? 's' : ''} filled in` : '';
+    const firstFrom = prompt ? `the kickoff prompt from ${earlier ? 'an earlier reply in ' : ''}"${row.title}"${filledIn}` : undefined;
     if (!(await this.confirmLaunch(l, `Start the next session in ${folder}?`, firstFrom, 'The old session stays open.'))) return;
     await this.markSeen(key);
     await this.launch(l);
+  }
+
+  /**
+   * Asks for each slot a prompt leaves for the user's answer, such as
+   * "<looks fine / what's wrong>", one step each, and returns the prompt with
+   * the answers in. Resolves undefined if the user backs out.
+   */
+  private async fillPrompt(prompt: string, title: (i: number) => string): Promise<string | undefined> {
+    const blanks = findBlanks(prompt);
+    const answers: string[] = [];
+    for (const [i, b] of blanks.entries()) {
+      const a = await askBlank(b, blankContext(prompt, b), title(i));
+      if (a === undefined) return undefined;
+      answers.push(a);
+    }
+    return fillBlanks(prompt, blanks, answers);
   }
 
   /**

@@ -39,12 +39,12 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
   - A background session opens with `claude attach` in a new tab.
-- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message: the newest reply's, or, if it gave none, the newest one an earlier reply wrote. The model and effort lists open on the old session's own ("Same as this session"), then a summary shows the folder, model, effort and the whole prompt before anything runs. **Copy prompt** copies it instead.
+- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message: the newest reply's, or, if it gave none, the newest one an earlier reply wrote. If the prompt leaves a slot for your answer, such as `<looks fine / what's wrong>`, you fill it in first: pick a choice, or type your own words, and they go in its place. The model and effort lists open on the old session's own ("Same as this session"), then a summary shows the folder, model, effort and the whole prompt before anything runs. **Copy prompt** copies it instead.
 - **A status-bar counter**, e.g. `🔔 1 needs you · 2 finished`. It turns amber while something waits, and a click opens the board.
 - **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more. They say how the turn ended.
   - There are none for the tab you're looking at.
   - With several VS Code windows open, only one window pops up: the one holding the tab, or the focused one for a session outside every window.
-- **New session (+)**: give it a name, a folder and a first task, then choose its model and effort. A summary of all five comes last, and only **Start** opens the tab running `claude -n "<name>" --model <model> --effort <effort> "<task>"`.
+- **New session (+)**: give it a name, a folder and a first task, then choose its model and effort. A pasted prompt with a slot for your answer is filled in the same way. A summary of all five comes last, and only **Start** opens the tab running `claude -n "<name>" --model <model> --effort <effort> "<task>"`.
   - The model list has Default, Opus, Sonnet, Haiku and Fable (Claude Code's aliases for its latest models), and room to type a full model id. The effort list goes from low to max.
   - Each list opens on your last choice. "Default" passes nothing, so your Claude Code settings decide; it says what they would pick, reading the project's `.claude/settings.json` before your own.
 

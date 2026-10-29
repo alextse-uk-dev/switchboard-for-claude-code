@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- **Start next session** fills in the kickoff prompt for you. A slot left for your answer, such as `<looks fine / what's wrong>`, is asked first: pick a choice, or type your own words straight into the list. A choice like "what's wrong" opens a box for your words. The answer goes in the slot's place, and the summary shows the finished prompt. Text in backticks and one-word command placeholders such as `<id>` are never asked.
+- **New session** does the same for a pasted first message.
+
 ## 0.3.2
 
 - **Start next session** starts with the session's kickoff prompt even when its newest reply didn't repeat it: it takes the newest prompt any earlier reply wrote, and the summary says it came from an earlier reply.
