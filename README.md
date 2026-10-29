@@ -39,12 +39,14 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
   - A background session opens with `claude attach` in a new tab.
-- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message. **Copy prompt** copies it instead.
+- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message. You choose its model and effort first, and the confirm box shows the whole prompt before anything runs. **Copy prompt** copies it instead.
 - **A status-bar counter**, e.g. `🔔 1 needs you · 2 finished`. It turns amber while something waits, and a click opens the board.
 - **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more. They say how the turn ended.
   - There are none for the tab you're looking at.
   - With several VS Code windows open, only one window pops up: the one holding the tab, or the focused one for a session outside every window.
-- **New session (+)**: give it a name, a folder and a first task, and it opens a tab running `claude -n "<name>" "<task>"`.
+- **New session (+)**: give it a name, a folder, a model, an effort and a first task, and it opens a tab running `claude -n "<name>" --model <model> --effort <effort> "<task>"`.
+  - The model list has Default, Opus, Sonnet, Haiku and Fable (Claude Code's aliases for its latest models), and room to type a full model id. The effort list goes from low to max.
+  - Each list opens on your last choice. "Default" passes nothing, so your Claude Code settings decide; it says what they would pick, reading the project's `.claude/settings.json` before your own.
 
 ## How it works
 
@@ -64,7 +66,7 @@ Until it is on the Marketplace, install it from a `.vsix` file:
 ```sh
 npm install
 npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
-code --install-extension switchboard-for-claude-code-0.2.2.vsix
+code --install-extension switchboard-for-claude-code-0.3.0.vsix
 ```
 
 Then run **Developer: Reload Window**.
@@ -82,6 +84,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.board.width` | `440` | The board's width in pixels, set the first time it opens and whenever this changes. **Switchboard: Set the Board to Its Default Width** sets it again. `0` leaves the side bar alone. |
 | `switchboard.showCost` | `true` | Show each session's cost at API prices. |
 | `switchboard.todos.fromReplies` | `true` | Add what Claude's replies ask of you to the to-do list, and clear it once the session moves on. |
+| `switchboard.newSession.chooseModel` | `true` | Ask for the model and effort before starting a session. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 

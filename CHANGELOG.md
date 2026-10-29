@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+- Choose the model and the effort before a session starts, in **New session** and in **Start next session**. Each list opens on your last choice, and "Default" shows what your Claude Code settings would pick (the project's own settings first). Another model id can be typed in. The confirm box for the next session says which model and effort it will use. `switchboard.newSession.chooseModel` turns the two questions off.
+
 ## 0.2.2
 
 - The to-do list no longer stacks up. When a session finishes a reply, its asks are matched to that reply: new ones are added, and the ones it no longer asks (you answered, it moved on) clear themselves. An ask that comes back later reopens. A session that has ended keeps its last asks until you tick them.

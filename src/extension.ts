@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { watch, type FSWatcher } from 'node:fs';
+import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BoardView, type FromBoard, type TodoView } from './board';
 import { toCard, type Card, type Where } from './core/card';
+import { EFFORTS, isModelId, launchCommand, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
@@ -21,6 +22,39 @@ const TICK_MS = 60_000;
 const RESIZE_STEP = 60;
 /** The board width last set on its own, so it is set once and the user's own resizing then stands. */
 const WIDTH_KEY = 'switchboard.boardWidthSet';
+/** The model and effort last chosen for a new session ('' for the default). */
+const LAST_MODEL_KEY = 'switchboard.lastModel';
+const LAST_EFFORT_KEY = 'switchboard.lastEffort';
+
+/** A model and an effort for a new session; either left out means Claude Code's default. */
+interface ModelChoice {
+  model?: string;
+  effort?: string;
+}
+
+/** A quick pick that opens on the item `active` picks. Resolves undefined if dismissed. */
+function quickPick<T extends vscode.QuickPickItem>(items: T[], o: { title: string; placeholder: string }, active: (i: T) => boolean): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const qp = vscode.window.createQuickPick<T>();
+    qp.title = o.title;
+    qp.placeholder = o.placeholder;
+    qp.ignoreFocusOut = true;
+    qp.items = items;
+    const start = items.find(active);
+    if (start) qp.activeItems = [start];
+    let done = false;
+    qp.onDidAccept(() => {
+      done = true;
+      resolve(qp.selectedItems[0] ?? qp.activeItems[0]);
+      qp.hide();
+    });
+    qp.onDidHide(() => {
+      if (!done) resolve(undefined);
+      qp.dispose();
+    });
+    qp.show();
+  });
+}
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const board = new Board(ctx);
@@ -52,10 +86,6 @@ const freshTokens = () => Math.max(0, config().get<number>('newSessionTokens', 1
 /** The board's default width in pixels (0: leave the side bar as it is). */
 const boardWidth = () => Math.max(0, Math.round(config().get<number>('board.width', 440)));
 
-/** Wraps text in single quotes for a POSIX shell. */
-function shq(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
 
 /**
  * Rows, tabs and the tracker are keyed by process (`keyOf`), because two
@@ -683,65 +713,134 @@ class Board implements vscode.Disposable {
   }
 
   private async newSession(): Promise<void> {
+    const asks = config().get<boolean>('newSession.chooseModel', true);
+    const total = asks ? 5 : 3;
     const name = await vscode.window.showInputBox({
-      title: 'New Claude Code session (1/3)',
+      title: `New Claude Code session (1/${total})`,
       prompt: 'A name for the session. It shows on the tab and in Switchboard. Leave empty to let Claude name it.',
       placeHolder: 'e.g. Fix the login redirect',
+      ignoreFocusOut: true,
     });
     if (name === undefined) return;
-    const cwd = await this.pickFolder();
+    const cwd = await this.pickFolder(`New Claude Code session (2/${total})`);
     if (!cwd) return;
+    let choice: ModelChoice = {};
+    if (asks) {
+      const c = await this.chooseModel(cwd, (n) => `New Claude Code session (${2 + n}/${total})`);
+      if (!c) return;
+      choice = c;
+    }
     const task = await vscode.window.showInputBox({
-      title: 'New Claude Code session (3/3)',
+      title: `New Claude Code session (${total}/${total})`,
       prompt: 'The first thing to ask Claude. Leave empty to start with a blank prompt.',
       placeHolder: 'e.g. Find why the login page redirects twice',
+      ignoreFocusOut: true,
     });
     if (task === undefined) return;
-    await this.launch(name, cwd, task);
+    await this.launch({ name, cwd, task, ...choice });
   }
 
   /**
    * Starts the session that follows a hand-over: same folder, and the kickoff
-   * prompt as its first message. The prompt comes from Claude's reply, so the
-   * user sees all of it before anything runs.
+   * prompt as its first message. The model and effort are chosen first; the
+   * prompt comes from Claude's reply, so the user sees all of it before
+   * anything runs.
    */
   private async startNext(key: string | undefined): Promise<void> {
     const row = key ? this.rows.get(key) : undefined;
     if (!row) return;
     const prompt = row.outcome?.kind === 'handoff' ? row.outcome.prompt : undefined;
     const folder = path.basename(row.s.cwd);
+    let choice: ModelChoice = {};
+    if (config().get<boolean>('newSession.chooseModel', true)) {
+      const c = await this.chooseModel(row.s.cwd, (n) => `Start the next session in ${folder} (${n}/2)`);
+      if (!c) return;
+      choice = c;
+    }
+    const runs = `Model: ${choice.model ?? 'your default'} · Effort: ${choice.effort ?? 'your default'}.`;
     const pick = await vscode.window.showInformationMessage(
       `Start a new session in ${folder}?`,
       {
         modal: true,
         detail: prompt
-          ? `Its first message will be the kickoff prompt from "${row.title}":\n\n${prompt}\n\nThe old session stays open.`
-          : `It starts with a blank prompt. The old session stays open.`,
+          ? `${runs}\n\nIts first message will be the kickoff prompt from "${row.title}":\n\n${prompt}\n\nThe old session stays open.`
+          : `${runs}\n\nIt starts with a blank prompt. The old session stays open.`,
       },
       'Start',
     );
     if (pick !== 'Start') return;
     await this.markSeen(key);
-    await this.launch(row.title, row.s.cwd, prompt ?? '');
+    await this.launch({ name: row.title, cwd: row.s.cwd, task: prompt ?? '', ...choice });
   }
 
-  /** Opens a tab running `claude -n <name> <task>` in a folder. */
-  private async launch(name: string, cwd: string, task: string): Promise<void> {
+  /**
+   * Asks for the model, then the effort. Each list opens on the last choice,
+   * and its first entry, "Default", passes nothing, so Claude Code's own
+   * settings decide. Resolves undefined if the user backs out.
+   */
+  private async chooseModel(cwd: string, title: (step: 1 | 2) => string): Promise<ModelChoice | undefined> {
+    const d = await this.defaultsFor(cwd);
+    const lastModel = this.ctx.globalState.get<string>(LAST_MODEL_KEY, '');
+    const lastEffort = this.ctx.globalState.get<string>(LAST_EFFORT_KEY, '');
+    const fromSettings = (v: string | undefined, file?: string) =>
+      v ? `${v}, from ${file ?? 'your Claude Code settings'}` : "Claude Code's own default";
+
+    type Item = vscode.QuickPickItem & { value?: string };
+    const models: Item[] = [
+      { label: 'Default', description: fromSettings(d.model, d.from), value: '' },
+      ...MODEL_ALIASES.map((m) => ({ label: m.label, description: m.id, detail: m.detail, value: m.id })),
+      { label: '$(edit) Another model…', description: 'a full model id, e.g. claude-opus-5-5', value: undefined },
+    ];
+    if (lastModel && !models.some((m) => m.value === lastModel)) models.splice(1, 0, { label: lastModel, description: 'last used', value: lastModel });
+    const m = await quickPick(models, { title: title(1), placeholder: 'Which model should the session use?' }, (i) => i.value === lastModel);
+    if (!m) return undefined;
+    let model = m.value;
+    if (model === undefined) {
+      model = await vscode.window.showInputBox({
+        title: title(1),
+        prompt: 'A model alias (opus, sonnet, haiku, fable) or a full model id.',
+        placeHolder: 'e.g. claude-opus-5-5',
+        ignoreFocusOut: true,
+        validateInput: (v) => (!v.trim() || isModelId(v.trim()) ? undefined : 'Letters, digits and . _ : @ [ ] - only.'),
+      });
+      if (model === undefined) return undefined;
+      model = model.trim();
+    }
+
+    const efforts: Item[] = [
+      { label: 'Default', description: fromSettings(d.effort), value: '' },
+      ...EFFORTS.map((e) => ({ label: e.id, description: e.detail || undefined, value: e.id })),
+    ];
+    const e = await quickPick(efforts, { title: title(2), placeholder: 'How hard should it think? More effort is slower and uses more tokens.' }, (i) => i.value === lastEffort);
+    if (!e) return undefined;
+    await this.ctx.globalState.update(LAST_MODEL_KEY, model);
+    await this.ctx.globalState.update(LAST_EFFORT_KEY, e.value ?? '');
+    return { model: model || undefined, effort: e.value || undefined };
+  }
+
+  /** The model and effort Claude Code would use in a folder: user settings, then the project's own. */
+  private async defaultsFor(cwd: string): Promise<Defaults> {
+    const read = (file: string) => fs.readFile(file, 'utf8').catch(() => undefined);
+    const files = [
+      { name: 'your Claude Code settings', file: path.join(claudeConfigDir(), 'settings.json') },
+      { name: "the project's .claude/settings.json", file: path.join(cwd, '.claude', 'settings.json') },
+      { name: "the project's .claude/settings.local.json", file: path.join(cwd, '.claude', 'settings.local.json') },
+    ];
+    return readDefaults(await Promise.all(files.map(async (f) => ({ name: f.name, text: await read(f.file) }))));
+  }
+
+  /** Opens a tab running `claude -n <name> [--model …] [--effort …] <task>` in a folder. */
+  private async launch(l: { name: string; cwd: string; task: string } & ModelChoice): Promise<void> {
     const claude = (await this.claudePath()) ?? 'claude';
-    const n = name.trim();
-    const first = task.trim();
-    const args = [shq(claude)];
-    if (n) args.push('-n', shq(n));
-    // `--` stops a task that starts with "-" from being read as an option.
-    if (first) args.push(...(first.startsWith('-') ? ['--'] : []), shq(first));
+    const command = launchCommand({ claude, name: l.name, model: l.model, effort: l.effort, task: l.task });
     // The user's shell takes over after claude exits, like a tab they opened.
     const shell = vscode.env.shell || process.env.SHELL || '/bin/zsh';
-    const t = this.shellTab(n || 'Claude Code', cwd, args.join(' '), 'sparkle', shell);
+    const t = this.shellTab(l.name.trim() || 'Claude Code', l.cwd, command, 'sparkle', shell);
     t.show(false);
     this.schedule();
   }
 
-  private async pickFolder(): Promise<string | undefined> {
+  private async pickFolder(title: string): Promise<string | undefined> {
     type Pick = vscode.QuickPickItem & { cwd?: string };
     const seen = new Set<string>();
     const items: Pick[] = [];
@@ -754,8 +853,9 @@ class Board implements vscode.Disposable {
     for (const s of this.sessions) add(s.cwd, 'A session runs here');
     items.push({ label: '$(folder-opened) Choose another folder…' });
     const pick = await vscode.window.showQuickPick(items, {
-      title: 'New Claude Code session (2/3)',
+      title,
       placeHolder: 'Which folder should the session work in?',
+      ignoreFocusOut: true,
     });
     if (!pick) return undefined;
     if (pick.cwd) return pick.cwd;
