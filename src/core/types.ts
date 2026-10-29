@@ -52,13 +52,14 @@ export const GROUP_LABEL: Record<Group, string> = {
  * - done: a normal final reply;
  * - question: the reply ends by asking the user something;
  * - handoff: the reply hands over to a new session (a kickoff prompt), or the
- *   context has grown past the new-session line;
+ *   context has grown past the new-session line. `earlier` marks a prompt
+ *   taken from an earlier reply, because the newest one gave none;
  * - stopped: an API error, or the user interrupted it;
  * - blank: nothing has been said yet.
  */
 export type Outcome =
   | { kind: 'done' }
   | { kind: 'question'; ask: string }
-  | { kind: 'handoff'; reason: 'kickoff' | 'context'; prompt?: string; line?: string }
+  | { kind: 'handoff'; reason: 'kickoff' | 'context'; prompt?: string; line?: string; earlier?: true }
   | { kind: 'stopped'; why: 'error' | 'interrupted'; text?: string }
   | { kind: 'blank' };

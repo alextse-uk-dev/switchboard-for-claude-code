@@ -37,6 +37,8 @@ export interface Card {
   costTip: string[];
   /** The newest reply's model, e.g. "Opus 5.5". */
   model?: string;
+  /** The newest reply's effort, e.g. "xhigh". */
+  effort?: string;
   /** Claude's whole last reply (markdown), when it says more than the detail line. */
   reply?: string;
   /** Lines for the hover tooltip. */
@@ -70,8 +72,9 @@ function stateWords(c: CardInput, tokens: number | undefined): string {
     case 'reply':
       return 'asks you';
     case 'handoff':
-      if (o?.kind === 'handoff' && o.reason === 'context') return tokens ? `context ${formatTokens(tokens)}` : 'context is large';
-      return o?.kind === 'handoff' && o.prompt ? 'kickoff prompt ready' : 'suggests a new session';
+      if (o?.kind === 'handoff' && o.reason === 'context' && !o.prompt) return tokens ? `context ${formatTokens(tokens)}` : 'context is large';
+      if (o?.kind === 'handoff' && o.prompt) return o.earlier ? 'earlier kickoff prompt' : 'kickoff prompt ready';
+      return 'suggests a new session';
     case 'stopped':
       return o?.kind === 'stopped' && o.why === 'interrupted' ? 'interrupted' : 'API error';
     case 'done':
@@ -89,7 +92,7 @@ function detailOf(c: CardInput): { detail?: string; quote: boolean } {
   if (c.group === 'reply' && o?.kind === 'question') return { detail: o.ask, quote: true };
   if (c.group === 'stopped' && o?.kind === 'stopped' && o.text) return { detail: o.text, quote: false };
   // A hand-over card shows what it went by: the prompt it would send, else the words that matched.
-  if (c.group === 'handoff' && o?.kind === 'handoff' && o.reason === 'kickoff') return { detail: o.prompt ?? o.line, quote: true };
+  if (c.group === 'handoff' && o?.kind === 'handoff' && (o.prompt || o.reason === 'kickoff')) return { detail: o.prompt ?? o.line, quote: true };
   const g = c.digest ? gist(c.digest) : undefined;
   return { detail: g, quote: false };
 }
@@ -135,6 +138,7 @@ export function toCard(c: CardInput): Card {
     cost: t ? `${formatUsd(t.usd)}${Object.keys(t.unpriced).length ? '+' : ''}` : undefined,
     costTip: t ? costTip(t, c.helpers ?? 0) : [],
     model: c.digest?.model ? modelName(c.digest.model.v) : undefined,
+    effort: c.digest?.effort?.v,
     reply: reply && saysMore(reply, detail) ? reply : undefined,
     tip,
   };

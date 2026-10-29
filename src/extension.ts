@@ -5,7 +5,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BoardView, type FromBoard, type TodoView } from './board';
 import { toCard, type Card, type Where } from './core/card';
-import { EFFORTS, isModelId, launchCommand, launchSummary, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
+import { EFFORTS, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
+import { modelName } from './core/cost';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
@@ -758,12 +759,15 @@ class Board implements vscode.Disposable {
     if (!row) return;
     const prompt = row.outcome?.kind === 'handoff' ? row.outcome.prompt : undefined;
     const folder = path.basename(row.s.cwd);
+    // The next session carries on the same work, so it starts from the same model and effort.
+    const same = { model: row.digest?.model?.v, effort: row.digest?.effort?.v };
     const choice = config().get<boolean>('newSession.chooseModel', true)
-      ? await this.chooseModel(row.s.cwd, (n) => `Start the next session in ${folder} (${n}/2)`)
-      : {};
+      ? await this.chooseModel(row.s.cwd, (n) => `Start the next session in ${folder} (${n}/2)`, same)
+      : same;
     if (!choice) return;
     const l = { name: row.title, cwd: row.s.cwd, task: prompt ?? '', ...choice };
-    const firstFrom = prompt ? `the kickoff prompt from "${row.title}"` : undefined;
+    const earlier = row.outcome?.kind === 'handoff' && row.outcome.earlier;
+    const firstFrom = prompt ? `the kickoff prompt from ${earlier ? 'an earlier reply in ' : ''}"${row.title}"` : undefined;
     if (!(await this.confirmLaunch(l, `Start the next session in ${folder}?`, firstFrom, 'The old session stays open.'))) return;
     await this.markSeen(key);
     await this.launch(l);
@@ -783,14 +787,17 @@ class Board implements vscode.Disposable {
   }
 
   /**
-   * Asks for the model, then the effort. Each list opens on the last choice,
-   * and its first entry, "Default", passes nothing, so Claude Code's own
-   * settings decide. Resolves undefined if the user backs out.
+   * Asks for the model, then the effort. Each list opens on `same` (the old
+   * session's own, when starting the next one), else on the last choice. Its
+   * first entry, "Default", passes nothing, so Claude Code's own settings
+   * decide. Resolves undefined if the user backs out.
    */
-  private async chooseModel(cwd: string, title: (step: 1 | 2) => string): Promise<ModelChoice | undefined> {
+  private async chooseModel(cwd: string, title: (step: 1 | 2) => string, same?: { model?: string; effort?: string }): Promise<ModelChoice | undefined> {
     const d = await this.defaultsFor(cwd);
-    const lastModel = this.ctx.globalState.get<string>(LAST_MODEL_KEY, '');
-    const lastEffort = this.ctx.globalState.get<string>(LAST_EFFORT_KEY, '');
+    const sameModel = same?.model && isModelId(same.model) ? same.model : undefined;
+    const sameEffort = same?.effort && isEffort(same.effort) ? same.effort : undefined;
+    const lastModel = sameModel ?? this.ctx.globalState.get<string>(LAST_MODEL_KEY, '');
+    const lastEffort = sameEffort ?? this.ctx.globalState.get<string>(LAST_EFFORT_KEY, '');
     const fromSettings = (v: string | undefined, file?: string) =>
       v ? `${v}, from ${file ?? 'your Claude Code settings'}` : "Claude Code's own default";
 
@@ -800,7 +807,11 @@ class Board implements vscode.Disposable {
       ...MODEL_ALIASES.map((m) => ({ label: m.label, description: m.id, detail: m.detail, value: m.id })),
       { label: '$(edit) Another model…', description: 'a full model id, e.g. claude-opus-5-5', value: undefined },
     ];
-    if (lastModel && !models.some((m) => m.value === lastModel)) models.splice(1, 0, { label: lastModel, description: 'last used', value: lastModel });
+    if (sameModel) {
+      models.splice(1, 0, { label: 'Same as this session', description: `${modelName(sameModel)} (${sameModel})`, value: sameModel });
+    } else if (lastModel && !models.some((m) => m.value === lastModel)) {
+      models.splice(1, 0, { label: lastModel, description: 'last used', value: lastModel });
+    }
     const m = await quickPick(models, { title: title(1), placeholder: 'Which model should the session use?' }, (i) => i.value === lastModel);
     if (!m) return undefined;
     let model = m.value;
@@ -818,7 +829,11 @@ class Board implements vscode.Disposable {
 
     const efforts: Item[] = [
       { label: 'Default', description: fromSettings(d.effort), value: '' },
-      ...EFFORTS.map((e) => ({ label: e.id, description: e.detail || undefined, value: e.id })),
+      ...EFFORTS.map((e) => ({
+        label: e.id,
+        description: [e.id === sameEffort ? 'this session\'s effort' : '', e.detail].filter(Boolean).join(' · ') || undefined,
+        value: e.id,
+      })),
     ];
     const e = await quickPick(efforts, { title: title(2), placeholder: 'How hard should it think? More effort is slower and uses more tokens.' }, (i) => i.value === lastEffort);
     if (!e) return undefined;

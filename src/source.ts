@@ -214,7 +214,8 @@ export class SessionSource {
             continue;
           }
           t.digest = readChunk(buf.subarray(cut).toString('utf8'), start + cut, t.digest);
-          if ((t.digest.customTitle || t.digest.aiTitle) && t.digest.reply) break;
+          // The last kickoff prompt may sit a few replies back; a hand-over card needs it.
+          if ((t.digest.customTitle || t.digest.aiTitle) && t.digest.reply && t.digest.kickoff) break;
           end = start + cut;
           span = TAIL_BYTES;
         }

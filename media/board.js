@@ -415,7 +415,11 @@
       cost.title = c.costTip.join('\n');
       stats.append(cost);
     }
-    if (c.model) stats.append(el('span', 'model', c.model));
+    if (c.model) {
+      const model = el('span', 'model', c.effort ? `${c.model} · ${c.effort}` : c.model);
+      model.title = c.effort ? `Model and effort of the last reply` : 'Model of the last reply';
+      stats.append(model);
+    }
     if (stats.childElementCount) n.append(stats);
 
     if (c.detail) n.append(el('div', `detail${c.quote ? ' quote' : ''}`, c.detail));

@@ -26,10 +26,14 @@ export interface Digest {
   stop?: At<{ why: 'error' | 'interrupted'; text?: string }>;
   /** The model of the newest reply, e.g. "claude-opus-5-5". */
   model?: At<string>;
+  /** The effort of the newest reply, e.g. "xhigh". */
+  effort?: At<string>;
+  /** The newest reply that handed over with a kickoff prompt, which may be older than `reply`. */
+  kickoff?: At<{ prompt: string; line?: string }>;
 }
 
 type Fact = keyof Digest;
-const FACTS: readonly Fact[] = ['customTitle', 'aiTitle', 'reply', 'tokens', 'compacted', 'recap', 'stop', 'model'];
+const FACTS: readonly Fact[] = ['customTitle', 'aiTitle', 'reply', 'tokens', 'compacted', 'recap', 'stop', 'model', 'effort', 'kickoff'];
 
 /** Each fact from whichever digest saw it later. */
 export function mergeDigest(a: Digest, b: Digest): Digest {
@@ -102,7 +106,12 @@ function readRecord(r: Record<string, unknown>, at: number, d: Digest): void {
       const tokens = tokensOf(m?.usage);
       if (tokens !== undefined) set('tokens', tokens);
       if (typeof m?.model === 'string' && m.model && m.model !== '<synthetic>') set('model', m.model);
-      if (text) set('reply', text);
+      if (typeof r.effort === 'string' && /^[a-z]{2,12}$/.test(r.effort)) set('effort', r.effort);
+      if (text) {
+        set('reply', text);
+        const h = handoffOf(text);
+        if (h?.prompt) set('kickoff', { prompt: h.prompt, line: h.line });
+      }
       return;
     }
   }
@@ -167,21 +176,28 @@ export function outcomeOf(d: Digest, freshTokens: number): Outcome {
   if (!d.reply) return { kind: 'blank' };
   const reply = d.reply.v;
   const recap = d.recap && d.recap.at > d.reply.at ? d.recap.v : undefined;
-  const handoff = HANDOFF.exec(reply);
-  if (handoff) {
-    const lineStart = reply.lastIndexOf('\n', handoff.index) + 1;
-    const lineEnd = reply.indexOf('\n', handoff.index);
-    const line = plain(reply.slice(lineStart, lineEnd < 0 ? undefined : lineEnd)) || undefined;
-    return { kind: 'handoff', reason: 'kickoff', prompt: kickoffPrompt(reply, handoff.index), line };
-  }
+  // A hand-over with no prompt of its own takes the newest one an earlier reply wrote.
+  const earlier = d.kickoff && d.kickoff.at < d.reply.at ? { prompt: d.kickoff.v.prompt, earlier: true as const } : {};
+  const handoff = handoffOf(reply);
+  if (handoff) return { kind: 'handoff', reason: 'kickoff', line: handoff.line, ...(handoff.prompt ? { prompt: handoff.prompt } : earlier) };
   const next = recap ? nextStep(recap) : undefined;
-  if (next && HANDOFF.test(next)) return { kind: 'handoff', reason: 'kickoff', line: next };
+  if (next && HANDOFF.test(next)) return { kind: 'handoff', reason: 'kickoff', line: next, ...earlier };
   // "Nothing is pending; next, say if you want more" is an offer, not an ask.
   const ask = askOf(reply) ?? (next && !NOTHING_PENDING.test(recap!) && yoursToDo(next) ? next : undefined);
   if (ask) return { kind: 'question', ask };
   const tokens = contextTokens(d);
-  if (freshTokens > 0 && tokens !== undefined && tokens >= freshTokens) return { kind: 'handoff', reason: 'context' };
+  if (freshTokens > 0 && tokens !== undefined && tokens >= freshTokens) return { kind: 'handoff', reason: 'context', ...earlier };
   return { kind: 'done' };
+}
+
+/** Whether a reply hands over to a new session: the line that says so, and the prompt it gives. */
+export function handoffOf(reply: string): { line?: string; prompt?: string } | undefined {
+  const handoff = HANDOFF.exec(reply);
+  if (!handoff) return undefined;
+  const lineStart = reply.lastIndexOf('\n', handoff.index) + 1;
+  const lineEnd = reply.indexOf('\n', handoff.index);
+  const line = plain(reply.slice(lineStart, lineEnd < 0 ? undefined : lineEnd)) || undefined;
+  return { line, prompt: kickoffPrompt(reply, handoff.index) };
 }
 
 /**

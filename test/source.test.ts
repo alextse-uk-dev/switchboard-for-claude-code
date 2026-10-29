@@ -85,3 +85,27 @@ test('costOf counts the whole transcript and its helper agents, then only what i
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('the first look reads back past the newest replies to find the last kickoff prompt', async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { SessionSource } = await import('../src/source');
+  const dir = await mkdtemp(join(tmpdir(), 'switchboard-'));
+  try {
+    const id = '11111111-2222-3333-4444-555555555555';
+    await mkdir(join(dir, 'projects', '-work-shop'), { recursive: true });
+    const said = (text: string) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }], usage: { input_tokens: 1 } } });
+    const filler = '{"type":"attachment","pad":"' + 'p'.repeat(200) + '"}\n';
+    await writeFile(
+      join(dir, 'projects', '-work-shop', `${id}.jsonl`),
+      [JSON.stringify({ type: 'ai-title', aiTitle: 'Parser' }), said('Kickoff prompt:\n```\nRead NOTES.md and start step 4.\n```'), filler.repeat(12_000), said('Fixed the width.'), ''].join('\n'),
+    );
+    const src = new SessionSource(dir, async () => undefined, () => {});
+    const d = await src.digestOf({ pid: 1, sessionId: id, cwd: '/work/shop', kind: 'interactive', name: 'shop-1', status: 'idle', startedAt: 0 }, 0);
+    assert.equal(d?.reply?.v, 'Fixed the width.');
+    assert.equal(d?.kickoff?.v.prompt, 'Read NOTES.md and start step 4.', 'found more than 2 MB back');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -210,3 +210,28 @@ test('nextStep: the words after "Next", else the last sentence', () => {
   assert.equal(nextStep('Built. Next step: press Cmd+Shift+P.'), 'press Cmd+Shift+P.');
   assert.equal(nextStep('Built and pushed. Answer the two cards on the page. (disable recaps in /config)'), 'Answer the two cards on the page.');
 });
+
+test('outcomeOf: a hand-over with no prompt of its own takes the newest kickoff prompt an earlier reply wrote', () => {
+  const kick = (p: string) => reply(`Status: done.\n\n### Kickoff prompt for the next session\n\`\`\`\n${p}\n\`\`\``);
+  const big = (text: string) => reply(text, 170_000);
+  const d = digestOf(kick('Read NOTES.md and start step 3.'), kick('Read NOTES.md and start step 4.'), big('Fixed the width.'));
+  assert.deepEqual(outcomeOf(d, 150_000), { kind: 'handoff', reason: 'context', prompt: 'Read NOTES.md and start step 4.', earlier: true });
+  const own = digestOf(kick('Read NOTES.md and start step 3.'), kick('Read NOTES.md and start step 5.'));
+  assert.equal(outcomeOf(own, 150_000).kind === 'handoff' && (outcomeOf(own, 150_000) as { earlier?: true }).earlier, undefined, 'the newest reply\'s own prompt is not "earlier"');
+  assert.deepEqual(outcomeOf(digestOf(big('Fixed the width.')), 150_000), { kind: 'handoff', reason: 'context' });
+  assert.equal(outcomeOf(digestOf(kick('Read NOTES.md and start step 3.'), reply('All done.')), 150_000).kind, 'done', 'an old prompt alone is no hand-over');
+});
+
+test('toCard: an earlier kickoff prompt shows on the hand-over card, and the effort shows by the model', () => {
+  const s = toSession({ pid: 7, sessionId: 'abcdef12-0000', cwd: '/home/sam/shop', kind: 'interactive', name: 'shop-3', status: 'idle' })!;
+  const d = digestOf(
+    reply('Kickoff prompt for the next session:\n```\nRead NOTES.md and start step 4.\n```'),
+    line({ type: 'assistant', effort: 'xhigh', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Fixed the width.' }], usage: { input_tokens: 170_000 } } }),
+  );
+  const c = toCard({ s, title: 'x', group: 'handoff', outcome: outcomeOf(d, 150_000), digest: d, unread: false, where: 'here', freshTokens: 150_000, home: '/home/sam' });
+  assert.equal(c.state, 'earlier kickoff prompt');
+  assert.equal(c.detail, 'Read NOTES.md and start step 4.');
+  assert.equal(c.prompt, true);
+  assert.equal(c.model, 'Opus 5.5');
+  assert.equal(c.effort, 'xhigh');
+});

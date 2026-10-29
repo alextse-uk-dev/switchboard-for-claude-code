@@ -26,7 +26,7 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Each card shows**, in full and never cut short:
   - the session's title (the name you gave it, or else Claude's own title, never `my-repo-27`), its folder, and how long ago it changed;
   - its **context** size, with a meter that fills towards the new-session line;
-  - its **cost**: what its tokens, helper agents included, would cost at Anthropic's API prices (hover for the breakdown), and the model of its last reply;
+  - its **cost**: what its tokens, helper agents included, would cost at Anthropic's API prices (hover for the breakdown), and the model and effort of its last reply;
   - what Claude last said: the question it asks, its recap, or the error. **Show the whole reply** opens Claude's whole last reply on the card.
   A dot marks a turn that finished since you last looked.
 - **A to-do list for you**, at the top of the board.
@@ -39,7 +39,7 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
   - A background session opens with `claude attach` in a new tab.
-- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message. You choose its model and effort, then a summary shows the folder, model, effort and the whole prompt before anything runs. **Copy prompt** copies it instead.
+- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message: the newest reply's, or, if it gave none, the newest one an earlier reply wrote. The model and effort lists open on the old session's own ("Same as this session"), then a summary shows the folder, model, effort and the whole prompt before anything runs. **Copy prompt** copies it instead.
 - **A status-bar counter**, e.g. `🔔 1 needs you · 2 finished`. It turns amber while something waits, and a click opens the board.
 - **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more. They say how the turn ended.
   - There are none for the tab you're looking at.
@@ -66,7 +66,7 @@ Until it is on the Marketplace, install it from a `.vsix` file:
 ```sh
 npm install
 npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
-code --install-extension switchboard-for-claude-code-0.3.1.vsix
+code --install-extension switchboard-for-claude-code-0.3.2.vsix
 ```
 
 Then run **Developer: Reload Window**.

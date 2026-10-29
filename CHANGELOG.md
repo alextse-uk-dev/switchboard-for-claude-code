@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- **Start next session** starts with the session's kickoff prompt even when its newest reply didn't repeat it: it takes the newest prompt any earlier reply wrote, and the summary says it came from an earlier reply.
+- It also starts from the old session's own model and effort: both lists open on them ("Same as this session").
+- Each card shows the last reply's effort beside its model, e.g. `Opus 5.5 · xhigh`.
+
 ## 0.3.1
 
 - The model and the effort are now the last two questions, after the name, the folder and the first message.
