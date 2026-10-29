@@ -2,12 +2,18 @@ import { strict as assert } from 'node:assert';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { SharedState } from '../src/shared';
 
+const dirs: string[] = [];
+
 async function tempDir(): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'switchboard-test-'));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'switchboard-test-'));
+  dirs.push(dir);
+  return dir;
 }
+
+after(() => Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true }))));
 
 test('marks made at the same moment, in one window or two, are all kept', async () => {
   const dir = await tempDir();
