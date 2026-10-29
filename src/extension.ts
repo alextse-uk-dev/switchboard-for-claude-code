@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { BoardView, type FromBoard, type TodoView } from './board';
 import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks';
 import { toCard, type Card, type Where } from './core/card';
-import { EFFORTS, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, readDefaults, shq, type Defaults } from './core/launch';
+import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, type Defaults } from './core/launch';
 import { modelName } from './core/cost';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
@@ -805,11 +805,12 @@ class Board implements vscode.Disposable {
    * prompt as its first message. Any slot the prompt leaves for the user's
    * answer is asked first, then the model and effort, then a summary to
    * confirm; the prompt comes from Claude's reply, so the user sees all of
-   * it there before anything runs.
+   * it there before anything runs. The new session takes over the old one's
+   * terminal tab when it can (see `nextTab`), else opens a tab of its own.
    */
   private async startNext(key: string | undefined): Promise<void> {
     const row = key ? this.rows.get(key) : undefined;
-    if (!row) return;
+    if (!key || !row) return;
     const prompt = row.outcome?.kind === 'handoff' ? row.outcome.prompt : undefined;
     const folder = path.basename(row.s.cwd);
     // The next session carries on the same work, so it starts from the same model and effort.
@@ -825,9 +826,58 @@ class Board implements vscode.Disposable {
     const earlier = row.outcome?.kind === 'handoff' && row.outcome.earlier;
     const filledIn = blanks ? `, with your answer${blanks > 1 ? 's' : ''} filled in` : '';
     const firstFrom = prompt ? `the kickoff prompt from ${earlier ? 'an earlier reply in ' : ''}"${row.title}"${filledIn}` : undefined;
-    if (!(await this.confirmLaunch(l, `Start the next session in ${folder}?`, firstFrom, 'The old session stays open.'))) return;
+    const tab = this.tabs.get(key);
+    const where = nextTab({
+      enabled: config().get<boolean>('startNext.sameTab', true),
+      kind: row.s.kind,
+      where: row.where,
+      busy: row.s.status === 'busy',
+      isTabProcess: !!tab && (await this.shellPid(tab)) === row.s.pid,
+    });
+    if (!(await this.confirmLaunch(l, `Start the next session in ${folder}?`, firstFrom, nextTabLine(where)))) return;
     await this.markSeen(key);
+    if (where.inPlace && tab) {
+      if (await this.launchInTab(key, tab, l)) return;
+      void vscode.window.showInformationMessage("Switchboard couldn't start it in the old session's tab, so it opened in a tab of its own.");
+    }
     await this.launch(l);
+  }
+
+  /**
+   * Ends the session in a tab and starts `l` in the shell it leaves behind.
+   * SIGINT is how Claude Code quits cleanly (exit status 0, the terminal put
+   * back); it is sent once more, then SIGTERM, if the session is slow to go.
+   * Resolves false, with nothing typed, if the session is busy again, won't
+   * end, or its tab closed as it ended.
+   */
+  private async launchInTab(key: string, tab: vscode.Terminal, l: Launching): Promise<boolean> {
+    const s = this.rows.get(key)?.s;
+    if (!s || s.status === 'busy' || !vscode.window.terminals.includes(tab)) return false;
+    for (const [sig, ms] of [['SIGINT', 2000], ['SIGINT', 2000], ['SIGTERM', 3000]] as const) {
+      if (!alive(s.pid)) break;
+      try {
+        process.kill(s.pid, sig);
+      } catch {
+        break;
+      }
+      await until(() => !alive(s.pid), ms);
+    }
+    if (alive(s.pid)) {
+      this.log.warn(`Session ${s.sessionId} (process ${s.pid}) did not end, so the next session opened in a tab of its own.`);
+      return false;
+    }
+    if (!vscode.window.terminals.includes(tab)) return false;
+    const claude = (await this.claudePath()) ?? 'claude';
+    const command = launchCommand({ claude, name: l.name, model: l.model, effort: l.effort, task: l.task });
+    // A file, because the user's shell may be zsh, bash or fish, and a long first message would echo line by line.
+    const file = path.join(os.tmpdir(), `switchboard-${randomUUID()}.sh`);
+    await fs.writeFile(file, inTabScript(command), { mode: 0o600 });
+    // The shell prints its prompt after claude exits; text sent before that would be lost to claude.
+    await new Promise((r) => setTimeout(r, 300));
+    tab.sendText(`sh ${shq(file)}`, true);
+    tab.show(false);
+    this.schedule();
+    return true;
   }
 
   /**
@@ -967,6 +1017,22 @@ class Board implements vscode.Disposable {
     for (const d of this.disposables) d.dispose();
     void this.shared.dispose();
   }
+}
+
+/** Whether a process is still running. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM: it runs, as someone else.
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Resolves once `done` holds, checking every 100 ms, or after `ms` regardless. */
+async function until(done: () => boolean, ms: number): Promise<void> {
+  for (const end = Date.now() + ms; !done() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 100));
 }
 
 function escapeMd(s: string): string {

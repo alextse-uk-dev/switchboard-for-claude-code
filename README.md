@@ -39,7 +39,7 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
   - A background session opens with `claude attach` in a new tab.
-- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message: the newest reply's, or, if it gave none, the newest one an earlier reply wrote. If the prompt leaves a slot for your answer, such as `<looks fine / what's wrong>`, you fill it in first: pick a choice, or type your own words, and they go in its place. The model and effort lists open on the old session's own ("Same as this session"), then a summary shows the folder, model, effort and the whole prompt before anything runs. **Copy prompt** copies it instead.
+- **Start next session.** On a hand-over card, one click opens a new session in the same folder with the kickoff prompt as its first message: the newest reply's, or, if it gave none, the newest one an earlier reply wrote. If the prompt leaves a slot for your answer, such as `<looks fine / what's wrong>`, you fill it in first: pick a choice, or type your own words, and they go in its place. The model and effort lists open on the old session's own ("Same as this session"), then a summary shows the folder, model, effort and the whole prompt before anything runs. On **Start**, the old session ends and the new one starts in its terminal tab, so one tab carries the work on (the old session's history is kept: `claude --resume` reopens it). If the old session is still working, or runs in another window or outside VS Code, the new one opens in a tab of its own and the old one stays open; the summary says which. **Copy prompt** copies it instead.
 - **A status-bar counter**, e.g. `🔔 1 needs you · 2 finished`. It turns amber while something waits, and a click opens the board.
 - **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more. They say how the turn ended.
   - There are none for the tab you're looking at.
@@ -85,6 +85,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.showCost` | `true` | Show each session's cost at API prices. |
 | `switchboard.todos.fromReplies` | `true` | Add what Claude's replies ask of you to the to-do list, and clear it once the session moves on. |
 | `switchboard.newSession.chooseModel` | `true` | Ask for the model and effort before starting a session. |
+| `switchboard.startNext.sameTab` | `true` | Start next session ends the old session and starts the new one in its tab. Off: a tab of its own, and the old session stays open. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 

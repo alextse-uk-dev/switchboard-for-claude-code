@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0
+
+- **Start next session** carries on in the same terminal tab. On **Start**, the old session ends cleanly (as Ctrl+C would end it) and the new one starts in the shell it leaves, with the kickoff prompt, model and effort. The old session's history is kept: `claude --resume` reopens it. If the old session is still working, runs in another window or outside VS Code, or its tab would close as it ends, the new session opens in a tab of its own and the old one stays open; the summary says which before you press Start. `switchboard.startNext.sameTab` turns it off.
+
 ## 0.4.1
 
 - A long kickoff prompt on a **Start a new session** card starts folded to its first 4 lines, with **Show more** and **Show less**. The board remembers which ones you opened. A prompt that fits in 4 lines at the board's width shows whole, with no button.

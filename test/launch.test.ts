@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { isModelId, launchCommand, launchSummary, readDefaults } from '../src/core/launch';
+import { inTabScript, isModelId, launchCommand, launchSummary, nextTab, nextTabLine, readDefaults } from '../src/core/launch';
 
 test('launchCommand passes the model and effort, quoted, before the first message', () => {
   assert.equal(
@@ -41,4 +41,33 @@ test('launchSummary lists everything the session starts with, and names the defa
   );
   assert.match(launchSummary({ name: 'x', where: '~', task: 'Read NOTES.md', firstFrom: 'the kickoff prompt from "Parser"', defaults: {} }), /First message, the kickoff prompt from "Parser":\n\nRead NOTES.md/);
   assert.match(launchSummary({ name: 'x', where: '~', task: '', defaults: {} }), /Model: Claude Code's default\nEffort: Claude Code's default/);
+});
+
+test('nextTab reuses the old tab only for an idle session with a shell of its own in this window', () => {
+  const here = { enabled: true, kind: 'interactive', where: 'here', busy: false, isTabProcess: false } as const;
+  assert.deepEqual(nextTab(here), { inPlace: true });
+  assert.deepEqual(nextTab({ ...here, enabled: false }), { inPlace: false }, 'the setting turns it off, with no reason to give');
+  for (const f of [
+    { ...here, kind: 'background' },
+    { ...here, where: 'elsewhere' },
+    { ...here, where: 'outside' },
+    { ...here, where: 'nested' },
+    { ...here, busy: true },
+    { ...here, isTabProcess: true },
+  ] as const) {
+    const t = nextTab(f);
+    assert.equal(t.inPlace, false);
+    assert.ok(!t.inPlace && t.why, `a reason for ${JSON.stringify(f)}`);
+  }
+});
+
+test('nextTabLine says what happens to the old session', () => {
+  assert.match(nextTabLine({ inPlace: true }), /old session ends.*its terminal tab.*claude --resume/);
+  assert.equal(nextTabLine({ inPlace: false }), 'The new session opens in a tab of its own, and the old one stays open.');
+  assert.match(nextTabLine({ inPlace: false, why: 'The old session is still working.' }), /^The old session is still working\. The new session opens/);
+});
+
+test('inTabScript deletes itself before it starts the session', () => {
+  const command = launchCommand({ claude: 'claude', name: 'Next', task: "line one\nit's line two" });
+  assert.equal(inTabScript(command), `rm -f "$0"\n'claude' -n 'Next' 'line one\nit'\\''s line two'\n`);
 });

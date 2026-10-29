@@ -1,3 +1,6 @@
+import type { Where } from './card';
+import type { Kind } from './types';
+
 /** The model aliases Claude Code accepts for its latest models, in the order the picker lists them. */
 export const MODEL_ALIASES = [
   { id: 'opus', label: 'Opus', detail: 'The latest Opus' },
@@ -117,4 +120,45 @@ export function launchSummary(o: Summary): string {
   ];
   if (o.after) lines.push('', o.after);
   return lines.join('\n');
+}
+
+/** What decides whether Start next session can reuse the old session's terminal tab. */
+export interface TabFacts {
+  /** The `switchboard.startNext.sameTab` setting. */
+  enabled: boolean;
+  kind: Kind;
+  where: Where;
+  busy: boolean;
+  /** True when claude is the tab's own process, so the tab closes as it ends. */
+  isTabProcess: boolean;
+}
+
+/** Where the next session starts: in the old one's tab, or (and why not) in a tab of its own. */
+export type NextTab = { inPlace: true } | { inPlace: false; why?: string };
+
+export function nextTab(f: TabFacts): NextTab {
+  if (!f.enabled) return { inPlace: false };
+  if (f.kind === 'background') return { inPlace: false, why: 'The old session runs in the background.' };
+  if (f.where === 'elsewhere') return { inPlace: false, why: 'The old session runs in another VS Code window.' };
+  if (f.where === 'outside') return { inPlace: false, why: 'The old session runs outside VS Code.' };
+  if (f.where === 'nested') return { inPlace: false, why: 'The old session was started by another session, so it has no tab of its own.' };
+  if (f.busy) return { inPlace: false, why: 'The old session is still working.' };
+  if (f.isTabProcess) return { inPlace: false, why: "The old session's tab closes when it ends." };
+  return { inPlace: true };
+}
+
+/** The confirm box's last line for a Start next session. */
+export function nextTabLine(t: NextTab): string {
+  if (t.inPlace) return 'The old session ends, and the new one starts in its terminal tab. Its history is kept: claude --resume reopens it.';
+  return [t.why, 'The new session opens in a tab of its own, and the old one stays open.'].filter(Boolean).join(' ');
+}
+
+/**
+ * A one-shot /bin/sh script that starts a session in a tab whose shell is
+ * already running. It deletes itself first, so the first message it holds
+ * doesn't stay on disk. The user's shell runs it as `sh <file>`, which reads
+ * the same in zsh, bash and fish, however long the message.
+ */
+export function inTabScript(command: string): string {
+  return `rm -f "$0"\n${command}\n`;
 }
