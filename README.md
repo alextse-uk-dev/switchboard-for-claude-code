@@ -61,12 +61,18 @@ Nothing leaves your machine.
 
 ## Install
 
-Until it is on the Marketplace, install it from a `.vsix` file:
+Until it is on the Marketplace, install it from a `.vsix` file. Download the newest one from [Releases](https://github.com/alextse-uk-dev/switchboard-for-claude-code/releases/latest), then:
+
+```sh
+code --install-extension switchboard-for-claude-code-0.5.0.vsix
+```
+
+Or build it yourself:
 
 ```sh
 npm install
 npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
-code --install-extension switchboard-for-claude-code-0.3.2.vsix
+code --install-extension switchboard-for-claude-code-<version>.vsix
 ```
 
 Then run **Developer: Reload Window**.
