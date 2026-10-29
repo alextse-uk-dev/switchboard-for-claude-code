@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- **Phone push.** When a session needs you or finishes a turn while you are away, a push goes to the free ntfy app on your phone. Run **Switchboard: Set Up Phone Push**: it makes a private topic on ntfy.sh to subscribe to (or takes your own topic URL and access token), then sends a test push. The topic is kept in VS Code's secret storage, never in settings.
+  - "Away" is 3 minutes without a key press or mouse move on macOS, or without a focused VS Code window elsewhere (`switchboard.phonePush.awayMinutes`). A session that starts waiting just before you leave is pushed once you have been away that long, unless you dealt with it first. `switchboard.phonePush.when: "always"` pushes every time instead.
+  - A push names the session, its folder and what happened. It quotes Claude only with `switchboard.phonePush.quoteClaude` on.
+  - Only one window sends each push. Turn kinds off with `switchboard.phonePush.needsYou` and `switchboard.phonePush.finished`; finished turns under 60 seconds are skipped (`switchboard.phonePush.finishedMinSeconds`). **Switchboard: Send a Test Push to My Phone** and **Switchboard: Turn Off Phone Push** do what they say.
+
 ## 0.5.0
 
 - **Start next session** carries on in the same terminal tab. On **Start**, the old session ends cleanly (as Ctrl+C would end it) and the new one starts in the shell it leaves, with the kickoff prompt, model and effort. The old session's history is kept: `claude --resume` reopens it. If the old session is still working, runs in another window or outside VS Code, or its tab would close as it ends, the new session opens in a tab of its own and the old one stays open; the summary says which before you press Start. `switchboard.startNext.sameTab` turns it off.

@@ -56,3 +56,29 @@ test('peers report what other live windows hold and when they were focused; dead
   assert.equal(peers.focusedAt, 500);
   await assert.rejects(fs.access(path.join(dir, 'windows', 'dead.json')));
 });
+
+test('peers say whether one of them has focus now, and when one last lost it', async () => {
+  const dir = await tempDir();
+  const a = new SharedState(dir, 'a');
+  const b = new SharedState(dir, 'b');
+  await a.init(0);
+  await b.init(0);
+  assert.equal((await a.peers()).focusedNow, false);
+  await b.noteFocused(500);
+  assert.equal((await a.peers()).focusedNow, true);
+  await b.noteBlurred(700);
+  const peers = await a.peers();
+  assert.equal(peers.focusedNow, false);
+  assert.equal(peers.blurredAt, 700);
+  assert.equal(peers.focusedAt, 500);
+  assert.equal(b.lastBlurredAt, 700);
+});
+
+test('a released claim can be claimed again', async () => {
+  const a = new SharedState(await tempDir(), 'a');
+  await a.init(0);
+  assert.equal(await a.claim('push-needs-1:x-100'), true);
+  assert.equal(await a.claim('push-needs-1:x-100'), false);
+  await a.release('push-needs-1:x-100');
+  assert.equal(await a.claim('push-needs-1:x-100'), true);
+});

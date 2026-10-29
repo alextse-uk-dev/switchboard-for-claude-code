@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -10,14 +10,19 @@ import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary
 import { modelName } from './core/cost';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
+import { awayMs, maskedTopic, newTopic, parseTopicUrl, pendingVerdict, pushMessage, pushVerdict, tokenProblem, type Pending, type PushTarget } from './core/push';
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
 import { outcomeOf, type Digest } from './core/transcript';
 import { GROUP_LABEL, GROUP_ORDER, keyOf, type Group, type Outcome, type Session } from './core/types';
+import { PushStore, sendPush, systemIdleMs } from './push';
 import { SharedState, type Peers } from './shared';
 import { claudeConfigDir, findClaude, message, SessionSource, type SessionCost } from './source';
 import { TodoStore } from './todos';
 
 const VIEW_ID = 'switchboard.sessions';
+const NTFY = 'https://ntfy.sh/';
+/** How often held-back pushes check whether you have left. */
+const PENDING_TICK_MS = 60_000;
 const DEBOUNCE_MS = 300;
 const TICK_MS = 60_000;
 /** How far one `workbench.action.increaseViewSize` moves a side bar's edge, in pixels. */
@@ -156,6 +161,12 @@ class Board implements vscode.Disposable {
   private readonly source: SessionSource;
   private readonly shared: SharedState;
   private readonly todos: TodoStore;
+  private readonly push: PushStore;
+  /** Events held back while you were here, by claim name. */
+  private readonly pending = new Map<string, Pending>();
+  private pendingTick?: NodeJS.Timeout;
+  /** When this window started, for telling "away" with no focus seen yet. */
+  private readonly startedAt = Date.now();
   private readonly tracker = new Tracker();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly watchers: FSWatcher[] = [];
@@ -175,7 +186,7 @@ class Board implements vscode.Disposable {
   private tabs = new Map<string, vscode.Terminal>();
   /** Sessions run from inside another session's process, by key. */
   private nested = new Set<string>();
-  private peers: Peers = { owned: new Set(), focusedAt: 0 };
+  private peers: Peers = { owned: new Set(), focusedAt: 0, blurredAt: 0, focusedNow: false };
   private rows = new Map<string, Row>();
 
   private running = false;
@@ -187,6 +198,7 @@ class Board implements vscode.Disposable {
     this.source = new SessionSource(claudeConfigDir(), () => this.claudePath(), (m) => this.log.warn(m));
     this.shared = new SharedState(ctx.globalStorageUri.fsPath, randomUUID());
     this.todos = new TodoStore(ctx.globalStorageUri.fsPath);
+    this.push = new PushStore(ctx.secrets);
     this.board = new BoardView(vscode.Uri.joinPath(ctx.extensionUri, 'media'), (m) => void this.fromBoard(m));
     this.status.name = 'Switchboard';
     this.status.command = 'workbench.view.extension.switchboard';
@@ -195,6 +207,7 @@ class Board implements vscode.Disposable {
   async start(): Promise<void> {
     await this.shared.init(Date.now());
     await this.safe(this.todos.load(), false);
+    await this.push.load().catch((e) => this.log.warn(`Phone push: ${message(e)}`));
     if (vscode.window.state.focused) await this.safe(this.shared.noteFocused(Date.now()), undefined);
     const w = vscode.window;
     this.disposables.push(
@@ -210,13 +223,20 @@ class Board implements vscode.Disposable {
       vscode.commands.registerCommand('switchboard.startNext', (arg) => this.startNext(keyArg(arg))),
       vscode.commands.registerCommand('switchboard.addTodo', () => this.addTodo()),
       vscode.commands.registerCommand('switchboard.fitWidth', () => this.fitWidthNow()),
+      vscode.commands.registerCommand('switchboard.phonePush.setup', () => this.setUpPush()),
+      vscode.commands.registerCommand('switchboard.phonePush.test', () => this.testPush()),
+      vscode.commands.registerCommand('switchboard.phonePush.off', () => this.pushOff()),
+      // Another window set it up or turned it off.
+      this.ctx.secrets.onDidChange((e) => {
+        if (e.key === PushStore.KEY) void this.push.load().then(() => this.render(), (err) => this.log.warn(`Phone push: ${message(err)}`));
+      }),
       this.board.onDidResize((px) => void this.onResize(px)),
       w.onDidChangeActiveTerminal(() => void this.noteLooking()),
       w.onDidChangeWindowState((s) => {
         if (s.focused) {
           void this.safe(this.shared.noteFocused(Date.now()), undefined);
           this.schedule();
-        }
+        } else void this.safe(this.shared.noteBlurred(Date.now()), undefined);
         void this.noteLooking();
       }),
       w.onDidOpenTerminal(() => this.schedule()),
@@ -314,7 +334,7 @@ class Board implements vscode.Disposable {
 
     this.tabs = await this.matchTabs(sessions);
     await this.safe(this.shared.publishOwned([...this.tabs.keys()]), undefined);
-    this.peers = await this.safe(this.shared.peers(), { owned: new Set<string>(), focusedAt: 0 });
+    this.peers = await this.safe(this.shared.peers(), { owned: new Set<string>(), focusedAt: 0, blurredAt: 0, focusedNow: false });
 
     const looking = this.lookingAt();
     const marks: Array<[string, number]> = [];
@@ -332,7 +352,10 @@ class Board implements vscode.Disposable {
     this.digests = new Map(sessions.flatMap((s, i): Array<[string, Digest]> => (digests[i] ? [[s.sessionId, digests[i]]] : [])));
     await this.pickAsks(sessions);
     this.render();
-    for (const e of events) void this.maybePop(e, looking);
+    for (const e of events) {
+      void this.maybePop(e, looking);
+      void this.maybePush(e, looking);
+    }
     await this.countCosts(sessions);
   }
 
@@ -537,6 +560,7 @@ class Board implements vscode.Disposable {
       if (mine.length) tip.appendMarkdown(`**${GROUP_LABEL[g]} (${mine.length})**: ${mine.map((r) => escapeMd(r.title)).join(', ')}  \n`);
     }
     if (todos) tip.appendMarkdown(`**To do**: ${todos} open  \n`);
+    if (this.push.peek()) tip.appendMarkdown(`**Phone push**: on${config().get<string>('phonePush.when', 'away') === 'always' ? '' : `, when you're away ${config().get<number>('phonePush.awayMinutes', 3)} min`}  \n`);
     tip.appendMarkdown('\nClick to open Switchboard.');
     this.status.tooltip = tip;
     this.status.show();
@@ -566,6 +590,184 @@ class Board implements vscode.Disposable {
     const pick = await (warn ? vscode.window.showWarningMessage(text, 'Open', ...next) : vscode.window.showInformationMessage(text, 'Open', ...next));
     if (pick === 'Open') await this.open(key);
     else if (pick === 'Start next session') await this.startNext(key);
+  }
+
+  private pushSettings() {
+    const cfg = config();
+    return {
+      needsOn: cfg.get<boolean>('phonePush.needsYou', true),
+      finishedOn: cfg.get<boolean>('phonePush.finished', true),
+      finishedMinMs: Math.max(0, cfg.get<number>('phonePush.finishedMinSeconds', 60)) * 1000,
+      always: cfg.get<string>('phonePush.when', 'away') === 'always',
+      awayAfterMs: Math.max(0, cfg.get<number>('phonePush.awayMinutes', 3)) * 60_000,
+      withWords: cfg.get<boolean>('phonePush.quoteClaude', false),
+    };
+  }
+
+  /** How long you have been away from this computer, as far as can be told. */
+  private async away(): Promise<number> {
+    const idle = await systemIdleMs();
+    const p = this.peers;
+    const anyFocused = vscode.window.state.focused || p.focusedNow;
+    const last = Math.max(this.startedAt, this.shared.lastFocusedAt, this.shared.lastBlurredAt, p.focusedAt, p.blurredAt);
+    return awayMs(Date.now(), idle, anyFocused, last);
+  }
+
+  /**
+   * Sends a phone push for an event if you are away, or holds it back to
+   * send if you leave before dealing with it. Every window sees every event,
+   * but only one decides (as for pop-ups), and a claim makes sure only one
+   * sends it.
+   */
+  private async maybePush(e: SessionEvent, looking: Session | undefined): Promise<void> {
+    if (!(await this.push.get())) return;
+    const key = keyOf(e.session);
+    const changedAt = this.tracker.changedAt(key) ?? Date.now();
+    const claim = `push-${e.type}-${key}-${changedAt}`;
+    const c = this.pushSettings();
+    const decides = this.tabs.has(key) || (!this.peers.owned.has(key) && this.shared.lastFocusedAt >= this.peers.focusedAt);
+    const verdict = pushVerdict(e, this.rows.get(key)?.outcome, {
+      ...c,
+      decides,
+      lookingAt: looking !== undefined && keyOf(looking) === key,
+      awayMs: c.always ? 0 : await this.away(),
+    });
+    const p: Pending = { e, key, sessionId: e.session.sessionId, changedAt, since: Date.now() };
+    if (verdict === 'push') await this.sendFor(p, claim);
+    else if (verdict === 'wait' && !c.always) this.hold(claim, p);
+  }
+
+  private hold(claim: string, p: Pending): void {
+    this.pending.set(claim, p);
+    this.pendingTick ??= setInterval(() => void this.checkPending(), PENDING_TICK_MS);
+  }
+
+  private async checkPending(): Promise<void> {
+    const c = this.pushSettings();
+    const target = await this.push.get();
+    // The other windows' focus may have changed since the last refresh.
+    if (this.pending.size && target && !c.always) this.peers = await this.safe(this.shared.peers(), this.peers);
+    const away = this.pending.size && target && !c.always ? await this.away() : 0;
+    const now = Date.now();
+    for (const [claim, p] of this.pending) {
+      const live = this.sessions.some((s) => keyOf(s) === p.key);
+      const v = !target || (c.always && !p.retry) || !live
+        ? 'drop'
+        : pendingVerdict(p, now, { changedAt: this.tracker.changedAt(p.key), seenAt: this.shared.seenAt(p.sessionId), awayMs: away, awayAfterMs: c.awayAfterMs });
+      if (v === 'wait') continue;
+      this.pending.delete(claim);
+      if (v === 'push') await this.sendFor(p, claim);
+    }
+    if (!this.pending.size) {
+      clearInterval(this.pendingTick);
+      this.pendingTick = undefined;
+    }
+  }
+
+  private async sendFor(p: Pending, claim: string): Promise<void> {
+    const target = await this.push.get();
+    // A retry already holds its claim.
+    if (!target || (!p.retry && !(await this.safe(this.shared.claim(claim), true)))) return;
+    const e = p.e;
+    const key = keyOf(e.session);
+    const row = this.rows.get(key);
+    const m = pushMessage(e, row?.title ?? e.session.name, path.basename(e.session.cwd) || e.session.cwd, row?.outcome, this.pushSettings().withWords);
+    try {
+      await sendPush(target, m);
+      this.log.info(`Phone push sent: ${e.type} for ${key}.`);
+    } catch (err) {
+      // Kept, and tried again each minute until it goes, the session moves on, or an hour passes.
+      this.log.warn(`Phone push not sent, trying again in a minute: ${message(err)}.`);
+      this.hold(claim, { ...p, retry: true });
+    }
+  }
+
+  private async setUpPush(): Promise<void> {
+    type Item = vscode.QuickPickItem & { how: 'new' | 'own' | 'off' };
+    const current = await this.push.get();
+    const items: Item[] = [
+      { label: '$(sparkle) Make a new private topic on ntfy.sh', description: 'free, no account', detail: 'Recommended. You subscribe to it in the ntfy app on your phone.', how: 'new' },
+      { label: '$(link) Use a topic URL I already have', description: 'ntfy.sh or your own ntfy server', how: 'own' },
+    ];
+    if (current) items.push({ label: '$(circle-slash) Turn phone push off', description: maskedTopic(current), how: 'off' });
+    const pick = await vscode.window.showQuickPick(items, {
+      title: current ? `Phone push is on (${maskedTopic(current)})` : 'Set up phone push',
+      placeHolder: 'Pushes go to the ntfy app on your phone when a session needs you or finishes while you are away.',
+      ignoreFocusOut: true,
+    });
+    if (!pick) return;
+    if (pick.how === 'off') return this.pushOff();
+    let target: PushTarget;
+    if (pick.how === 'new') {
+      target = { server: NTFY, topic: newTopic(randomBytes(16)) };
+    } else {
+      const url = await vscode.window.showInputBox({
+        title: 'Set up phone push (1/2): topic URL',
+        prompt: 'The topic your phone subscribes to. Anyone who knows it can read the pushes, so keep it hard to guess.',
+        placeHolder: 'https://ntfy.sh/your-topic',
+        ignoreFocusOut: true,
+        validateInput: (v) => {
+          const r = parseTopicUrl(v);
+          return 'error' in r ? r.error : undefined;
+        },
+      });
+      if (url === undefined) return;
+      const r = parseTopicUrl(url);
+      if ('error' in r) return;
+      const token = await vscode.window.showInputBox({
+        title: 'Set up phone push (2/2): access token',
+        prompt: 'Only for a topic that needs one (it starts "tk_"). Leave it empty for an open topic.',
+        password: true,
+        ignoreFocusOut: true,
+        validateInput: tokenProblem,
+      });
+      if (token === undefined) return;
+      target = { ...r, token: token.trim() || undefined };
+    }
+    await this.push.set(target);
+    const url = `${target.server}${target.topic}`;
+    if (pick.how === 'new') {
+      await vscode.env.clipboard.writeText(url);
+      const steps = [
+        '1. Install the free ntfy app on your phone (App Store or Google Play) and open it.',
+        '2. Tap +, then paste or type this topic, and subscribe:',
+        `      ${target.topic}`,
+        '',
+        `The full URL, ${url}, is on the clipboard (on an iPhone with Handoff, it pastes there too). Keep it private: anyone who knows the topic can read the pushes.`,
+        '',
+        'Then press Send a test push.',
+      ].join('\n');
+      const go = await vscode.window.showInformationMessage('Phone push is on. Now subscribe on your phone.', { modal: true, detail: steps }, 'Send a test push');
+      if (go === 'Send a test push') await this.testPush();
+      return;
+    }
+    await this.testPush();
+  }
+
+  private async testPush(): Promise<void> {
+    const target = await this.push.get();
+    if (!target) {
+      const go = await vscode.window.showInformationMessage('Phone push is not set up yet.', 'Set up phone push');
+      if (go) await this.setUpPush();
+      return;
+    }
+    try {
+      await sendPush(target, { title: 'Switchboard test push', message: 'Phone push works. You will get one like this when a session needs you or finishes while you are away.', priority: 3, tags: ['wave'] });
+      void vscode.window.showInformationMessage(`Test push sent to ${maskedTopic(target)}. If it doesn't show on your phone, check that the ntfy app subscribes to the same topic.`);
+    } catch (e) {
+      void vscode.window.showWarningMessage(`The test push was not sent: ${message(e)}.`);
+    }
+  }
+
+  private async pushOff(): Promise<void> {
+    if (!(await this.push.get())) {
+      void vscode.window.showInformationMessage('Phone push is already off.');
+      return;
+    }
+    await this.push.clear();
+    this.pending.clear();
+    this.render();
+    void vscode.window.showInformationMessage('Phone push is off. The topic is forgotten; set it up again for a new one.');
   }
 
   private async fromBoard(m: FromBoard): Promise<void> {
@@ -1013,6 +1215,7 @@ class Board implements vscode.Disposable {
   dispose(): void {
     clearTimeout(this.debounce);
     clearInterval(this.tick);
+    clearInterval(this.pendingTick);
     for (const w of this.watchers) w.close();
     for (const d of this.disposables) d.dispose();
     void this.shared.dispose();

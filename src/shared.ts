@@ -29,6 +29,10 @@ export interface Peers {
   owned: Set<string>;
   /** When any of them was last focused (0 if none). */
   focusedAt: number;
+  /** When any of them last lost focus (0 if none). */
+  blurredAt: number;
+  /** One of them has focus now. */
+  focusedNow: boolean;
 }
 
 /**
@@ -46,6 +50,7 @@ export class SharedState {
   private seen = new Map<string, number>();
   private owned: string[] = [];
   private focusedAt = 0;
+  private blurredAt = 0;
   private lastWritten = '';
   /** Writes from this window run one at a time. */
   private queue: Promise<unknown> = Promise.resolve();
@@ -126,13 +131,23 @@ export class SharedState {
     return this.writeWindow();
   }
 
+  /** Tells the other windows that this one has just lost focus. */
+  noteBlurred(at: number): Promise<void> {
+    this.blurredAt = at;
+    return this.writeWindow();
+  }
+
+  get lastBlurredAt(): number {
+    return this.blurredAt;
+  }
+
   get lastFocusedAt(): number {
     return this.focusedAt;
   }
 
   private writeWindow(): Promise<void> {
     return this.serial(async () => {
-      const data = JSON.stringify({ v: 1, pid: process.pid, sessions: this.owned, focusedAt: this.focusedAt });
+      const data = JSON.stringify({ v: 1, pid: process.pid, sessions: this.owned, focusedAt: this.focusedAt, blurredAt: this.blurredAt });
       if (data === this.lastWritten) return;
       await writeAtomic(this.ownFile, data);
       this.lastWritten = data;
@@ -141,7 +156,7 @@ export class SharedState {
 
   /** What the other live windows hold, and when one was last focused. Files left by closed windows are removed. */
   async peers(): Promise<Peers> {
-    const out: Peers = { owned: new Set(), focusedAt: 0 };
+    const out: Peers = { owned: new Set(), focusedAt: 0, blurredAt: 0, focusedNow: false };
     let names: string[] = [];
     try {
       names = await fs.readdir(this.windowsDir);
@@ -152,13 +167,17 @@ export class SharedState {
       const file = path.join(this.windowsDir, n);
       if (!n.endsWith('.json') || file === this.ownFile) continue;
       try {
-        const data = JSON.parse(await fs.readFile(file, 'utf8')) as { pid?: unknown; sessions?: unknown; focusedAt?: unknown };
+        const data = JSON.parse(await fs.readFile(file, 'utf8')) as { pid?: unknown; sessions?: unknown; focusedAt?: unknown; blurredAt?: unknown };
         if (typeof data.pid !== 'number' || !alive(data.pid)) {
           await fs.rm(file, { force: true });
           continue;
         }
         if (Array.isArray(data.sessions)) for (const k of data.sessions) if (typeof k === 'string') out.owned.add(k);
-        if (typeof data.focusedAt === 'number') out.focusedAt = Math.max(out.focusedAt, data.focusedAt);
+        const focused = typeof data.focusedAt === 'number' ? data.focusedAt : 0;
+        const blurred = typeof data.blurredAt === 'number' ? data.blurredAt : 0;
+        out.focusedAt = Math.max(out.focusedAt, focused);
+        out.blurredAt = Math.max(out.blurredAt, blurred);
+        if (focused > blurred) out.focusedNow = true;
       } catch {
         // Being replaced right now; the next refresh reads it.
       }
@@ -179,6 +198,11 @@ export class SharedState {
     } catch (e) {
       return (e as NodeJS.ErrnoException).code !== 'EEXIST';
     }
+  }
+
+  /** Gives a claim back, e.g. after a push failed to send, so it can be tried again. */
+  async release(event: string): Promise<void> {
+    await fs.rm(path.join(this.claimsDir, event.replace(/[^A-Za-z0-9.-]/g, '_')), { force: true });
   }
 
   async dispose(): Promise<void> {

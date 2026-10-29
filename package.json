@@ -1,8 +1,8 @@
 {
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
-  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab.",
-  "version": "0.5.0",
+  "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a push on your phone when one needs you while you are away.",
+  "version": "0.6.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -24,7 +24,8 @@
     "sessions",
     "terminal",
     "agents",
-    "board"
+    "board",
+    "notifications"
   ],
   "main": "./out/src/extension.js",
   "activationEvents": [
@@ -102,6 +103,22 @@
         "command": "switchboard.fitWidth",
         "title": "Set the Board to Its Default Width",
         "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.phonePush.setup",
+        "title": "Set Up Phone Push",
+        "category": "Switchboard",
+        "icon": "$(device-mobile)"
+      },
+      {
+        "command": "switchboard.phonePush.test",
+        "title": "Send a Test Push to My Phone",
+        "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.phonePush.off",
+        "title": "Turn Off Phone Push",
+        "category": "Switchboard"
       }
     ],
     "menus": {
@@ -155,6 +172,46 @@
           "default": 30,
           "minimum": 0,
           "description": "Only pop up for finished turns that ran at least this many seconds."
+        },
+        "switchboard.phonePush.needsYou": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send a phone push when a session starts waiting for you (a permission prompt or a question). Run \"Switchboard: Set Up Phone Push\" first; until then nothing is sent."
+        },
+        "switchboard.phonePush.finished": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send a phone push when a session finishes a turn: done, waiting for your reply, handing over, or stopped on an error."
+        },
+        "switchboard.phonePush.finishedMinSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "Only push for finished turns that ran at least this many seconds."
+        },
+        "switchboard.phonePush.when": {
+          "type": "string",
+          "enum": [
+            "away",
+            "always"
+          ],
+          "enumDescriptions": [
+            "Only while you are away from this computer (see Away Minutes). A session that needs you just before you leave is pushed once you have been away that long, unless you dealt with it first.",
+            "Every time, unless you are looking at that session's tab."
+          ],
+          "default": "away",
+          "description": "When to send a phone push."
+        },
+        "switchboard.phonePush.awayMinutes": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "description": "How long you must have been away before a push is sent. On macOS this is time since your last key press or mouse move; elsewhere, time since any VS Code window had focus."
+        },
+        "switchboard.phonePush.quoteClaude": {
+          "type": "boolean",
+          "default": false,
+          "description": "Quote Claude's question or error in the push. Off, a push says only the session's title, its folder and what happened, because pushes pass through the ntfy server."
         },
         "switchboard.newSessionTokens": {
           "type": "number",

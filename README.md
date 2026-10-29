@@ -44,6 +44,10 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Pop-ups with an Open button** when a session starts waiting for you, or finishes a turn of 30 seconds or more. They say how the turn ended.
   - There are none for the tab you're looking at.
   - With several VS Code windows open, only one window pops up: the one holding the tab, or the focused one for a session outside every window.
+- **A push on your phone** when a session needs you or finishes while you are away, through the free [ntfy](https://ntfy.sh) app. It is off until you run **Switchboard: Set Up Phone Push**: it makes a private topic (or takes your own topic URL and access token) and sends a test push.
+  - "Away" means no key press or mouse move for 3 minutes on macOS; elsewhere, no VS Code window has had focus for 3 minutes. If a session starts waiting while you are here and you then leave without dealing with it, the push goes once you have been away that long (for up to an hour).
+  - A push says the session's title, its folder and what happened ("needs you · asks a question", "finished after 4 min", "stopped · on an error"). It never quotes Claude unless you turn on `switchboard.phonePush.quoteClaude`.
+  - With several VS Code windows open, only one sends each push.
 - **New session (+)**: give it a name, a folder and a first task, then choose its model and effort. A pasted prompt with a slot for your answer is filled in the same way. A summary of all five comes last, and only **Start** opens the tab running `claude -n "<name>" --model <model> --effort <effort> "<task>"`.
   - The model list has Default, Opus, Sonnet, Haiku and Fable (Claude Code's aliases for its latest models), and room to type a full model id. The effort list goes from low to max.
   - Each list opens on your last choice. "Default" passes nothing, so your Claude Code settings decide; it says what they would pick, reading the project's `.claude/settings.json` before your own.
@@ -54,17 +58,18 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 2. When a status file changes, Switchboard reads Claude Code's own session list (`claude agents --json`), adding each file's change time.
 3. Titles, and how each turn ended, come from the end of each session's transcript: Claude's last reply, Claude Code's recap, the context size, a compaction or an error. The cost comes from the whole transcript and those of its helper agents. Only new lines are read after the first look.
 4. A session is matched to its tab through the process tree: the session's parent process is the tab's shell.
-5. "Seen" marks and the to-do list live in the extension's storage folder, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
-6. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
+5. A phone push is one POST to the ntfy server (HTTPS, or plain HTTP to a server on your own network). The topic, and the access token if you gave one, are kept in VS Code's secret storage (the system keychain), never in settings, since settings can sync. On macOS, how long you have been away is read from `ioreg` (the system's idle time).
+6. "Seen" marks and the to-do list live in the extension's storage folder, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
+7. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
 
-Nothing leaves your machine.
+Nothing leaves your machine, except a phone push once you set one up: then each push goes to the ntfy server you chose.
 
 ## Install
 
 Until it is on the Marketplace, install it from a `.vsix` file. Download the newest one from [Releases](https://github.com/alextse-uk-dev/switchboard-for-claude-code/releases/latest), then:
 
 ```sh
-code --install-extension switchboard-for-claude-code-0.5.0.vsix
+code --install-extension switchboard-for-claude-code-0.6.0.vsix
 ```
 
 Or build it yourself:
@@ -86,6 +91,12 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.popups.needsYou` | `true` | Pop up when a session starts waiting for you. |
 | `switchboard.popups.finished` | `true` | Pop up when a session finishes a turn. |
 | `switchboard.popups.finishedMinSeconds` | `30` | Only for turns at least this long. |
+| `switchboard.phonePush.needsYou` | `true` | Push when a session starts waiting for you (once phone push is set up). |
+| `switchboard.phonePush.finished` | `true` | Push when a session finishes a turn. |
+| `switchboard.phonePush.finishedMinSeconds` | `60` | Only for turns at least this long. |
+| `switchboard.phonePush.when` | `"away"` | `"away"`: only while you are away. `"always"`: every time, except for the tab you are looking at. |
+| `switchboard.phonePush.awayMinutes` | `3` | How long you must have been away first. |
+| `switchboard.phonePush.quoteClaude` | `false` | Quote Claude's question or error in the push. Pushes pass through the ntfy server, so this is off by default. |
 | `switchboard.newSessionTokens` | `150000` | Suggest a new session once a finished session's context reaches this many tokens. `0` turns it off. |
 | `switchboard.board.width` | `440` | The board's width in pixels, set the first time it opens and whenever this changes. **Switchboard: Set the Board to Its Default Width** sets it again. `0` leaves the side bar alone. |
 | `switchboard.showCost` | `true` | Show each session's cost at API prices. |
@@ -105,6 +116,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 - **Width.** VS Code has no setting for a side bar's width, and its resize commands act only on the part that has focus (a webview doesn't count). So, to set the default width, Switchboard opens Explorer for a moment, widens the side bar in steps of 60 pixels, and comes back. It lands within about one step of the setting. If you have moved Switchboard out of the primary side bar, drag its edge instead.
 - **Cost** is an estimate from the token counts Claude Code writes into each transcript, at the list prices built into this version (October 2026). On a Claude plan it is what the same tokens would cost on the API, not what you pay. A model it has no price for is left out, and the cost then shows a `+`.
 - **The to-do list** reads replies the way you'd skim them: only lines labelled for you (`Needs you:`, `**You:**`, `Over to you:`) and lists under such a heading count. A reply that asks in other words shows under "Waiting for your reply" instead.
+- **Phone push** goes through an ntfy server: ntfy.sh, or one you run yourself. On ntfy.sh, anyone who knows the topic can read its pushes, which is why a new topic is 16 random characters and is kept out of settings. A topic of your own with an access token is safer. Off macOS, "away" can only be told from VS Code's window focus, so a window left focused counts as "here".
 - macOS and Linux only for now (it uses `ps` to read the process tree).
 
 ## Development
