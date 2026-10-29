@@ -18,10 +18,17 @@ export interface Todo {
    * in the session's last reply isn't picked up again.
    */
   deletedAt?: number;
+  /**
+   * Cleared on its own: the session's newer reply no longer asked it. It
+   * comes back if a later reply asks it again.
+   */
+  clearedAt?: number;
 }
 
-/** Done and deleted items are dropped after this long. */
+/** Done, deleted and cleared items are dropped after this long. */
 const KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+/** Ticked items leave the list's Done part after this long. */
+const SHOW_DONE_MS = 24 * 60 * 60 * 1000;
 /** Longer text is not a to-do but a pasted document. A long kickoff prompt still fits. */
 export const MAX_TODO = 10_000;
 
@@ -107,23 +114,53 @@ export function askId(sessionId: string, text: string): string {
   return `c-${createHash('sha1').update(`${sessionId}\n${text.toLowerCase()}`).digest('hex').slice(0, 16)}`;
 }
 
-export interface Ask {
+/** What one session's newest reply asks of the user (possibly nothing). */
+export interface SessionAsks {
   sessionId: string;
   session: string;
-  text: string;
+  texts: readonly string[];
 }
 
-/** Adds the asks not seen before (done and deleted ones count as seen). Returns undefined if nothing is new. */
-export function mergeAsks(list: readonly Todo[], asks: readonly Ask[], now: number): Todo[] | undefined {
-  const ids = new Set(list.map((t) => t.id));
-  const added: Todo[] = [];
-  for (const a of asks) {
-    const id = askId(a.sessionId, a.text);
-    if (ids.has(id)) continue;
-    ids.add(id);
-    added.push({ id, text: a.text, from: 'claude', sessionId: a.sessionId, session: a.session, createdAt: now });
+const live = (t: Todo) => !t.doneAt && !t.deletedAt && !t.clearedAt;
+
+/**
+ * Brings each session's asks in line with its newest reply. Asks it makes
+ * are added (or come back, if they were cleared). Open asks from its earlier
+ * replies that it no longer makes are cleared: the user has answered and the
+ * session moved on. Items the user ticked, deleted or wrote are left alone.
+ * Returns undefined if nothing changes.
+ */
+export function syncAsks(list: readonly Todo[], sessions: readonly SessionAsks[], now: number): Todo[] | undefined {
+  let out = [...list];
+  let changed = false;
+  for (const s of sessions) {
+    const wanted = new Map(s.texts.map((text) => [askId(s.sessionId, text), text]));
+    out = out.map((t) => {
+      if (t.from !== 'claude' || t.sessionId !== s.sessionId) return t;
+      if (live(t) && !wanted.has(t.id)) {
+        changed = true;
+        return { ...t, clearedAt: now };
+      }
+      if (t.clearedAt && wanted.has(t.id)) {
+        changed = true;
+        const { clearedAt: _, ...back } = t;
+        return { ...back, session: s.session, createdAt: now };
+      }
+      return t;
+    });
+    const have = new Set(out.map((t) => t.id));
+    for (const [id, text] of wanted) {
+      if (have.has(id)) continue;
+      changed = true;
+      out.push({ id, text, from: 'claude', sessionId: s.sessionId, session: s.session, createdAt: now });
+    }
   }
-  return added.length ? [...list, ...added] : undefined;
+  return changed ? out : undefined;
+}
+
+/** The items the list shows: open ones, and those ticked in the last day. */
+export function shownTodos(list: readonly Todo[], now: number): Todo[] {
+  return list.filter((t) => !t.deletedAt && !t.clearedAt && (!t.doneAt || now - t.doneAt <= SHOW_DONE_MS));
 }
 
 /** What the user can do to the list. */
@@ -142,20 +179,21 @@ export function applyOp(list: readonly Todo[], o: TodoOp, now: number): Todo[] |
       return [...list, { id: o.id, text, from: 'you', sessionId: o.sessionId, session: o.session, createdAt: now }];
     }
     case 'done': {
-      const t = list.find((x) => x.id === o.id && !x.deletedAt);
+      const t = list.find((x) => x.id === o.id && !x.deletedAt && !x.clearedAt);
       if (!t || !!t.doneAt === o.done) return undefined;
       return list.map((x) => (x === t ? { ...x, doneAt: o.done ? now : undefined } : x));
     }
     case 'delete': {
-      const t = list.find((x) => x.id === o.id && !x.deletedAt);
+      const t = list.find((x) => x.id === o.id && !x.deletedAt && !x.clearedAt);
       if (!t) return undefined;
       // The user's own items can simply go; an ask is kept as a marker.
       if (t.from === 'you') return list.filter((x) => x !== t);
       return list.map((x) => (x === t ? { ...x, deletedAt: now } : x));
     }
     case 'clearDone': {
-      if (!list.some((x) => x.doneAt && !x.deletedAt)) return undefined;
-      return list.flatMap((x) => (x.doneAt && !x.deletedAt ? (x.from === 'you' ? [] : [{ ...x, deletedAt: now }]) : [x]));
+      const ticked = (x: Todo) => !!x.doneAt && !x.deletedAt && !x.clearedAt;
+      if (!list.some(ticked)) return undefined;
+      return list.flatMap((x) => (ticked(x) ? (x.from === 'you' ? [] : [{ ...x, deletedAt: now }]) : [x]));
     }
   }
 }
@@ -163,7 +201,7 @@ export function applyOp(list: readonly Todo[], o: TodoOp, now: number): Todo[] |
 /** Drops items done or deleted long ago. */
 export function prune(list: readonly Todo[], now: number): Todo[] {
   return list.filter((t) => {
-    const ended = t.deletedAt ?? t.doneAt;
+    const ended = t.deletedAt ?? t.clearedAt ?? t.doneAt;
     return ended === undefined || now - ended <= KEEP_MS;
   });
 }
@@ -192,10 +230,12 @@ export function parseTodos(json: string): Todo[] {
     const session = str(o.session);
     const doneAt = num(o.doneAt);
     const deletedAt = num(o.deletedAt);
+    const clearedAt = num(o.clearedAt);
     if (sessionId) t.sessionId = sessionId;
     if (session) t.session = session;
     if (doneAt !== undefined) t.doneAt = doneAt;
     if (deletedAt !== undefined) t.deletedAt = deletedAt;
+    if (clearedAt !== undefined) t.clearedAt = clearedAt;
     return [t];
   });
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { applyOp, mergeAsks, parseTodos, prune, serializeTodos, type Ask, type Todo, type TodoOp } from './core/todo';
+import { applyOp, parseTodos, prune, serializeTodos, syncAsks, type SessionAsks, type Todo, type TodoOp } from './core/todo';
 
 /** How long a change waits for another window's lock, and when a lock counts as left behind. */
 const LOCK_WAIT_MS = 3000;
@@ -45,10 +45,10 @@ export class TodoStore {
     return this.update((list) => applyOp(list, o, now), now);
   }
 
-  /** Adds asks found in sessions' replies. Resolves true if any were new. */
-  addAsks(asks: readonly Ask[], now: number): Promise<boolean> {
-    if (!asks.length) return Promise.resolve(false);
-    return this.update((list) => mergeAsks(list, asks, now), now);
+  /** Brings the asks in line with sessions' newest replies. Resolves true if the list changed. */
+  syncAsks(sessions: readonly SessionAsks[], now: number): Promise<boolean> {
+    if (!sessions.length) return Promise.resolve(false);
+    return this.update((list) => syncAsks(list, sessions, now), now);
   }
 
   private update(apply: (list: readonly Todo[]) => Todo[] | undefined, now: number): Promise<boolean> {

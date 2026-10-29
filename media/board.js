@@ -280,7 +280,7 @@
     const list = el('div', 'todos');
     list.setAttribute('role', 'list');
     const now = Date.now();
-    if (!open.length) list.append(el('p', 'todo-empty', 'Nothing to do. When Claude writes "Needs you: …" in a reply, it lands here. You can add your own too.'));
+    if (!open.length) list.append(el('p', 'todo-empty', 'Nothing to do. When Claude writes "Needs you: …" in a reply, it lands here, and it clears itself once the session moves on. You can add your own too.'));
     for (const t of open) list.append(todoRow(t, now));
     const add = el('div', 'todo-add');
     add.append(addInput, named(button('Add', 'btn', addTodo, 'Add to your to-do list'), 'todo:add'));
@@ -315,7 +315,11 @@
     const body = el('div', 'todo-body');
     body.append(el('div', 'todo-text', t.text));
     const meta = el('div', 'todo-meta');
-    if (t.from === 'claude') meta.append(el('span', 'by', 'asked by'));
+    if (t.from === 'claude') {
+      const by = el('span', 'by', 'asked by');
+      by.title = t.key ? 'Clears itself when this session\'s next reply no longer asks it' : 'The session has ended, so this stays until you tick it';
+      meta.append(by);
+    }
     if (t.session) {
       if (t.key) {
         meta.append(named(button(t.session, 'from link', () => send({ type: 'open', key: t.key }), 'Open this session'), `todo:${t.id}:from`));

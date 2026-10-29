@@ -32,7 +32,9 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **A to-do list for you**, at the top of the board.
   - What Claude asks you to do lands there by itself: a line such as `Needs you: approve the deploy` or `**You:** run the migration`, or the list under a heading such as "Needs you".
   - Add your own with the field under the list, or put what a card says on the list with its to-do button.
-  - Tick an item when it's done. Each item names the session it came from, and a click opens that session. The list lives on after the session ends, and every VS Code window shows the same list.
+  - Claude's asks clear themselves once the session moves on: when its next reply no longer asks it, you have answered. If a later reply asks again, the item comes back. A session that has ended keeps its last asks until you tick them, as a reminder.
+  - Tick an item when it's done; ticked items leave the list after a day. Your own items stay until you tick or delete them.
+  - Each item names the session it came from, and a click opens that session. Every VS Code window shows the same list.
 - **A default width.** The first time the board opens, the side bar is widened to 440 pixels (a setting). After that, drag its edge as usual.
 - **Click a card to open it.**
   - A session in this window's terminal tabs comes to the front.
@@ -62,7 +64,7 @@ Until it is on the Marketplace, install it from a `.vsix` file:
 ```sh
 npm install
 npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
-code --install-extension switchboard-for-claude-code-0.2.1.vsix
+code --install-extension switchboard-for-claude-code-0.2.2.vsix
 ```
 
 Then run **Developer: Reload Window**.
@@ -79,7 +81,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.newSessionTokens` | `150000` | Suggest a new session once a finished session's context reaches this many tokens. `0` turns it off. |
 | `switchboard.board.width` | `440` | The board's width in pixels, set the first time it opens and whenever this changes. **Switchboard: Set the Board to Its Default Width** sets it again. `0` leaves the side bar alone. |
 | `switchboard.showCost` | `true` | Show each session's cost at API prices. |
-| `switchboard.todos.fromReplies` | `true` | Add what Claude's replies ask of you to the to-do list. |
+| `switchboard.todos.fromReplies` | `true` | Add what Claude's replies ask of you to the to-do list, and clear it once the session moves on. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 

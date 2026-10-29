@@ -7,7 +7,7 @@ import { BoardView, type FromBoard, type TodoView } from './board';
 import { toCard, type Card, type Where } from './core/card';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
-import { asksOf, MAX_TODO, type Ask, type TodoOp } from './core/todo';
+import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
 import { outcomeOf, type Digest } from './core/transcript';
 import { GROUP_LABEL, GROUP_ORDER, keyOf, type Group, type Outcome, type Session } from './core/types';
 import { SharedState, type Peers } from './shared';
@@ -356,20 +356,24 @@ class Board implements vscode.Disposable {
     return o;
   }
 
-  /** Adds to the to-do list what idle sessions' newest replies ask of the user. */
+  /**
+   * Keeps the to-do list in step with what idle sessions' newest replies ask
+   * of the user: new asks are added, and asks a session has moved past are
+   * cleared. A session that has ended keeps its last asks until ticked.
+   */
   private async pickAsks(sessions: readonly Session[]): Promise<void> {
     const live = new Set(sessions.map((s) => s.sessionId));
     for (const id of this.asked.keys()) if (!live.has(id)) this.asked.delete(id);
     if (!config().get<boolean>('todos.fromReplies', true)) return;
-    const asks: Ask[] = [];
+    const changed: SessionAsks[] = [];
     for (const s of sessions) {
       const d = this.digests.get(s.sessionId);
       // A reply in the middle of a turn may still change its mind.
       if (s.status !== 'idle' || !d?.reply || this.asked.get(s.sessionId) === d.reply.at) continue;
       this.asked.set(s.sessionId, d.reply.at);
-      for (const text of asksOf(d.reply.v)) asks.push({ sessionId: s.sessionId, session: displayTitle(s, d), text });
+      changed.push({ sessionId: s.sessionId, session: displayTitle(s, d), texts: asksOf(d.reply.v) });
     }
-    await this.safe(this.todos.addAsks(asks, Date.now()), false);
+    await this.safe(this.todos.syncAsks(changed, Date.now()), false);
   }
 
   private render(): void {
@@ -416,7 +420,7 @@ class Board implements vscode.Disposable {
   /** The list as the page draws it: open items newest first, then done ones, most recently done first. */
   private todoViews(rows: readonly Row[]): TodoView[] {
     const keys = new Map(rows.map((r) => [r.s.sessionId, keyOf(r.s)]));
-    const list = this.todos.list.filter((t) => !t.deletedAt);
+    const list = shownTodos(this.todos.list, Date.now());
     const open = list.filter((t) => !t.doneAt).sort((a, b) => b.createdAt - a.createdAt);
     const done = list.filter((t) => t.doneAt).sort((a, b) => b.doneAt! - a.doneAt!);
     return [...open, ...done].map((t) => ({

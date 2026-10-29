@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- The to-do list no longer stacks up. When a session finishes a reply, its asks are matched to that reply: new ones are added, and the ones it no longer asks (you answered, it moved on) clear themselves. An ask that comes back later reopens. A session that has ended keeps its last asks until you tick them.
+- Ticked items leave the list after a day. Your own items never clear themselves.
+
 ## 0.2.1
 
 - A session that waits on you without asking a question ("the only thing left is your OK", "once you say go") now shows under **Waiting for your reply**, not Done.
