@@ -22,6 +22,8 @@ export interface Card {
   detail?: string;
   /** The detail is Claude's own words. */
   quote: boolean;
+  /** The detail is long enough to start folded, with Show more. */
+  fold: boolean;
   changedAt?: number;
   /** "other window", "background", … */
   chips: string[];
@@ -129,6 +131,7 @@ export function toCard(c: CardInput): Card {
     state: stateWords(c, tokens),
     detail,
     quote,
+    fold: foldsDetail(c.group, detail),
     changedAt: c.changedAt,
     chips: chipsOf(c),
     tokens,
@@ -142,6 +145,20 @@ export function toCard(c: CardInput): Card {
     reply: reply && saysMore(reply, detail) ? reply : undefined,
     tip,
   };
+}
+
+/** Lines a folded detail keeps showing; the board clamps to the same number. */
+export const FOLD_LINES = 4;
+
+/**
+ * Whether a card's detail starts folded. Only hand-over cards fold: their
+ * detail is a whole kickoff prompt, often a paragraph or more. Over
+ * FOLD_LINES lines, or about as many characters as FOLD_LINES lines of a
+ * board at its default width, is long. The board unfolds one that fits anyway.
+ */
+export function foldsDetail(group: Group, detail: string | undefined): boolean {
+  if (group !== 'handoff' || !detail) return false;
+  return detail.split('\n').length > FOLD_LINES || detail.length > FOLD_LINES * 60;
 }
 
 /** Whether a reply holds more than the detail line shows (markup and spacing aside). */

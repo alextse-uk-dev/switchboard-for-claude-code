@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- A long kickoff prompt on a **Start a new session** card starts folded to its first 4 lines, with **Show more** and **Show less**. The board remembers which ones you opened. A prompt that fits in 4 lines at the board's width shows whole, with no button.
+
 ## 0.4.0
 
 - **Start next session** fills in the kickoff prompt for you. A slot left for your answer, such as `<looks fine / what's wrong>`, is asked first: pick a choice, or type your own words straight into the list. A choice like "what's wrong" opens a box for your words. The answer goes in the slot's place, and the summary shows the finished prompt. Text in backticks and one-word command placeholders such as `<id>` are never asked.

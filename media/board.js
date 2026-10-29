@@ -6,9 +6,9 @@
   // @ts-ignore: provided by VS Code inside a webview.
   const vscode = acquireVsCodeApi();
   const board = /** @type {HTMLElement} */ (document.getElementById('board'));
-  /** Folded sections, cards whose whole reply is open, and whether done to-dos show. */
-  /** @type {{ folded: Record<string, boolean>, open: Record<string, boolean>, showDone: boolean }} */
-  const ui = Object.assign({ folded: {}, open: {}, showDone: false }, vscode.getState());
+  /** Folded sections, cards whose whole reply is open, long details shown in full, and whether done to-dos show. */
+  /** @type {{ folded: Record<string, boolean>, open: Record<string, boolean>, unfolded: Record<string, boolean>, showDone: boolean }} */
+  const ui = Object.assign({ folded: {}, open: {}, unfolded: {}, showDone: false }, vscode.getState());
   /** @type {any} */
   let state;
   /** The add-a-to-do field is made once, so a redraw keeps what is being typed. */
@@ -245,11 +245,39 @@
       board.append(section);
     }
 
+    checkFolds();
+
     if (typing) {
       addInput.focus();
       addInput.setSelectionRange(sel[0], sel[1]);
     } else if (focusName) /** @type {HTMLElement | null} */ (board.querySelector(`[data-focus="${CSS.escape(focusName)}"]`))?.focus();
   }
+
+  /**
+   * Clamps every folded detail, then lets one that fits in its lines anyway
+   * show whole, with no Show more (a wide board can fit a long prompt).
+   */
+  function checkFolds() {
+    for (const d of /** @type {NodeListOf<HTMLElement>} */ (board.querySelectorAll('.detail[data-fold]'))) {
+      d.classList.remove('fits');
+      d.classList.add('folded');
+      // A hidden board has no layout yet; it is checked again when it is shown.
+      if (!d.clientHeight) continue;
+      if (d.scrollHeight <= d.clientHeight + 1) {
+        d.classList.remove('folded');
+        d.classList.add('fits');
+      }
+    }
+  }
+  let resizing = false;
+  window.addEventListener('resize', () => {
+    if (resizing) return;
+    resizing = true;
+    requestAnimationFrame(() => {
+      resizing = false;
+      checkFolds();
+    });
+  });
 
   /** @template {HTMLElement} T @param {T} node @param {string} name @returns {T} */
   function named(node, name) {
@@ -422,7 +450,25 @@
     }
     if (stats.childElementCount) n.append(stats);
 
-    if (c.detail) n.append(el('div', `detail${c.quote ? ' quote' : ''}`, c.detail));
+    if (c.detail) {
+      const detail = el('div', `detail${c.quote ? ' quote' : ''}`, c.detail);
+      n.append(detail);
+      // A long kickoff prompt starts folded to its first lines.
+      if (c.fold) {
+        const unfolded = !!ui.unfolded[c.key];
+        detail.id = `detail-${c.key}`;
+        if (!unfolded) detail.dataset.fold = '';
+        const toggle = named(button(unfolded ? 'Show less' : 'Show more', 'link more unfold', () => {
+          if (unfolded) delete ui.unfolded[c.key];
+          else ui.unfolded[c.key] = true;
+          vscode.setState(ui);
+          render();
+        }), `card:${c.key}:fold`);
+        toggle.setAttribute('aria-expanded', String(unfolded));
+        toggle.setAttribute('aria-controls', detail.id);
+        n.append(toggle);
+      }
+    }
 
     if (c.reply) {
       const open = !!ui.open[c.key];

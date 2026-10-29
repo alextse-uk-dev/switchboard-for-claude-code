@@ -27,7 +27,7 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
   - the session's title (the name you gave it, or else Claude's own title, never `my-repo-27`), its folder, and how long ago it changed;
   - its **context** size, with a meter that fills towards the new-session line;
   - its **cost**: what its tokens, helper agents included, would cost at Anthropic's API prices (hover for the breakdown), and the model and effort of its last reply;
-  - what Claude last said: the question it asks, its recap, or the error. **Show the whole reply** opens Claude's whole last reply on the card.
+  - what Claude last said: the question it asks, its recap, or the error. **Show the whole reply** opens Claude's whole last reply on the card. A long kickoff prompt on a hand-over card starts folded to its first 4 lines; **Show more** opens the rest.
   A dot marks a turn that finished since you last looked.
 - **A to-do list for you**, at the top of the board.
   - What Claude asks you to do lands there by itself: a line such as `Needs you: approve the deploy` or `**You:** run the migration`, or the list under a heading such as "Needs you".

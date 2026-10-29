@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { toCard } from '../src/core/card';
+import { FOLD_LINES, foldsDetail, toCard } from '../src/core/card';
 import { toSession } from '../src/core/parse';
 import { askOf, contextTokens, gist, kickoffPrompt, mergeDigest, nextStep, outcomeOf, plain, readChunk, type Digest } from '../src/core/transcript';
 
@@ -154,6 +154,30 @@ test('toCard: a hand-over card shows the prompt it would send; ~ only for real s
   assert.equal(c.detail, 'Read NOTES.md and start step 3.');
   assert.equal(c.prompt, true);
   assert.equal(c.cwd, '/home/samuel/shop');
+});
+
+test('foldsDetail: only a long hand-over detail starts folded', () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `Step ${i + 1}.`).join('\n');
+  assert.equal(foldsDetail('handoff', lines(FOLD_LINES)), false);
+  assert.equal(foldsDetail('handoff', lines(FOLD_LINES + 1)), true);
+  assert.equal(foldsDetail('handoff', 'Read NOTES.md and start step 3.'), false);
+  // One long paragraph with no line breaks folds too.
+  assert.equal(foldsDetail('handoff', 'word '.repeat(60)), true);
+  assert.equal(foldsDetail('handoff', undefined), false);
+  // Other sections keep their detail whole, however long.
+  for (const g of ['needs', 'reply', 'stopped', 'done', 'working', 'idle'] as const) assert.equal(foldsDetail(g, lines(20)), false);
+});
+
+test('toCard: a long kickoff prompt folds; a short one does not', () => {
+  const s = toSession({ pid: 7, sessionId: 'abcdef12-0000', cwd: '/home/sam/shop', kind: 'interactive', name: 'shop-3', status: 'idle' })!;
+  const card = (prompt: string) => {
+    const d = digestOf(reply(`Kickoff prompt:\n\`\`\`\n${prompt}\n\`\`\``));
+    return toCard({ s, title: 'x', group: 'handoff', outcome: outcomeOf(d, 150_000), digest: d, unread: false, where: 'here', freshTokens: 150_000, home: '/home/sam' });
+  };
+  const long = card(`Read NOTES.md (the status table and the fixes after it). ${'Then check the log, run the tests and report. '.repeat(8)}`);
+  assert.equal(long.prompt, true);
+  assert.equal(long.fold, true);
+  assert.equal(card('Read NOTES.md and start step 3.').fold, false);
 });
 
 test('toCard: cost, model and the whole reply', () => {

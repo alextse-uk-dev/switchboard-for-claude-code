@@ -289,6 +289,16 @@ button {
 }
 .link:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground)); text-decoration: underline; }
 .more { margin: 5px 0 0 22px; }
+/* A long kickoff prompt, folded to its first 4 lines (FOLD_LINES in card.ts). */
+.detail.folded {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+.detail.fits + .unfold { display: none; }
+.more + .more { margin-top: 2px; }
 
 /* Claude's whole reply, drawn from its markdown. */
 .reply {
