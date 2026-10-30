@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- **A click on a Mac alert's banner brings the session's tab forward**, in the VS Code window that holds it. A background session opens in a new tab, as from the board, and a session resumed since under a new process is still found.
+  - Banners now come from a small helper app inside the extension, called Switchboard, instead of Script Editor (a click on a Script Editor banner could only open Script Editor). The first banner asks whether Switchboard may send notifications.
+  - If the helper can't post (notifications are off for Switchboard), the banner comes from Script Editor as before, without the click, and the log says why once.
+  - The first click asks whether Switchboard may open the link; tick "Do not ask me again" to skip that next time.
+  - **Switchboard: Send a Test Mac Alert** checks the click too, says when the click can't work and why, and has a button for System Settings > Notifications.
+
 ## 0.7.0
 
 - **Mac alerts** (macOS, off by default: `switchboard.macAlert.enabled`). When a session needs you or finishes a turn of 60 seconds or more, a notification banner shows, for when the VS Code pop-up can't reach you: another app is in front, or you have left the desk.

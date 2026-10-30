@@ -3,9 +3,9 @@ import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { showBanner, playSound } from './alert';
+import { MacHelper, openNotificationSettings, showBanner, playSound } from './alert';
 import { BoardView, type FromBoard, type TodoView } from './board';
-import { alertPlan, alertText, givesAllAlerts, soundFile } from './core/alert';
+import { alertPlan, alertText, givesAllAlerts, linkedKey, OPEN_PATH, openQuery, readLink, soundFile, TEST_PATH } from './core/alert';
 import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks';
 import { toCard, type Card, type Where } from './core/card';
 import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, type Defaults } from './core/launch';
@@ -184,6 +184,9 @@ class Board implements vscode.Disposable {
   private readonly shared: SharedState;
   private readonly todos: TodoStore;
   private readonly push: PushStore;
+  private readonly mac: MacHelper;
+  /** The last reason a clickable banner fell back to osascript, so the log says it once. */
+  private macProblem?: string;
   /** Events held back while you were here, by claim name. */
   private readonly pending = new Map<string, Pending>();
   private pendingTick?: NodeJS.Timeout;
@@ -221,6 +224,7 @@ class Board implements vscode.Disposable {
     this.shared = new SharedState(ctx.globalStorageUri.fsPath, randomUUID());
     this.todos = new TodoStore(ctx.globalStorageUri.fsPath);
     this.push = new PushStore(ctx.secrets);
+    this.mac = new MacHelper(path.join(ctx.extensionPath, 'out', 'mac'), ctx.globalStorageUri.fsPath);
     this.board = new BoardView(vscode.Uri.joinPath(ctx.extensionUri, 'media'), (m) => void this.fromBoard(m));
     this.status.name = 'Switchboard';
     this.status.command = 'workbench.view.extension.switchboard';
@@ -237,6 +241,8 @@ class Board implements vscode.Disposable {
       this.log,
       this.board,
       vscode.window.registerWebviewViewProvider(VIEW_ID, this.board),
+      // A click on a Mac alert's banner comes back here, in the window that posted it.
+      vscode.window.registerUriHandler({ handleUri: (uri) => this.fromLink(uri) }),
       this.status,
       vscode.commands.registerCommand('switchboard.open', (arg) => this.open(keyArg(arg))),
       vscode.commands.registerCommand('switchboard.newSession', () => this.newSession()),
@@ -693,7 +699,7 @@ class Board implements vscode.Disposable {
     if (!(await this.safe(this.shared.claim(`alert-${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
     const t = alertText(e, row?.title ?? e.session.name, path.basename(e.session.cwd) || e.session.cwd, row?.outcome);
     await Promise.all([
-      plan.banner ? showBanner(t.title, t.message).catch((err) => this.log.warn(`Mac alert banner not shown: ${message(err)}.`)) : undefined,
+      plan.banner ? this.banner(t.title, t.message, OPEN_PATH, openQuery(key)).catch((err) => this.log.warn(`Mac alert banner not shown: ${message(err)}.`)) : undefined,
       plan.sound && sound ? playSound(sound).catch((err) => this.log.warn(`Mac alert sound not played: ${message(err)}.`)) : undefined,
     ]);
   }
@@ -704,18 +710,64 @@ class Board implements vscode.Disposable {
       return;
     }
     const sound = soundFile(config().get<string>('macAlert.sound', 'Glass'));
+    let problem: string | undefined;
     try {
-      await Promise.all([showBanner('Switchboard', 'A test alert. Sessions that need you, or finish, will show like this.'), sound ? playSound(sound) : undefined]);
+      [problem] = await Promise.all([this.banner('Switchboard', 'A test alert. Click it: a session that needs you, or finishes, shows like this, and a click brings its tab forward.', TEST_PATH, ''), sound ? playSound(sound) : undefined]);
     } catch (err) {
       void vscode.window.showWarningMessage(`The test alert failed: ${message(err)}`);
       return;
     }
     const off = !macAlertsOn();
+    const withSound = sound ? ', with its sound' : '';
+    const said = problem
+      ? `Test alert sent${withSound}, but a click on it can't open anything: ${problem}. Script Editor showed it instead.`
+      : `Test alert sent${withSound}. Click the banner to check the click: VS Code comes forward and says so. The first click asks whether Switchboard may open the link; tick "Do not ask me again". No banner? Allow notifications for Switchboard in System Settings > Notifications.`;
+    const settings = 'Open Notification Settings';
     const pick = await vscode.window.showInformationMessage(
-      `Test alert sent${sound ? ', with its sound' : ''}. No banner? Allow notifications for Script Editor in System Settings > Notifications.${off ? ' Mac alerts are off: turn them on to get them for your sessions.' : ''}`,
+      `${said}${off ? ' Mac alerts are off: turn them on to get them for your sessions.' : ''}`,
+      settings,
       ...(off ? ['Turn on Mac alerts'] : []),
     );
+    if (pick === settings) await openNotificationSettings().catch((err) => this.log.warn(`Could not open Notification settings: ${message(err)}.`));
     if (pick === 'Turn on Mac alerts') await config().update('macAlert.enabled', true, vscode.ConfigurationTarget.Global);
+  }
+
+  /**
+   * A banner that opens a link back to this window when clicked. It goes
+   * through the helper app; if that can't post it (no permission, or a build
+   * without the helper), osascript shows it instead, without the click, and
+   * the reason comes back.
+   */
+  private async banner(title: string, text: string, linkPath: string, query: string): Promise<string | undefined> {
+    try {
+      const link = await vscode.env.asExternalUri(vscode.Uri.from({ scheme: vscode.env.uriScheme, authority: this.ctx.extension.id, path: linkPath, query }));
+      await this.mac.post(title, text, link.toString());
+      this.macProblem = undefined;
+      return undefined;
+    } catch (err) {
+      const why = message(err);
+      if (why !== this.macProblem) this.log.warn(`Mac alert banner shown through osascript, so a click can't open the tab: ${why}.`);
+      this.macProblem = why;
+      await showBanner(title, text);
+      return why;
+    }
+  }
+
+  /** A clicked banner's link: bring the session's tab forward, or confirm the test. */
+  private async fromLink(uri: vscode.Uri): Promise<void> {
+    const ask = readLink(uri.path, uri.query);
+    if (!ask) return;
+    if ('test' in ask) {
+      void vscode.window.showInformationMessage('The banner click works: a click on a session\'s banner brings its tab forward.');
+      return;
+    }
+    let key = linkedKey(ask.open, this.rows.keys());
+    if (!key) {
+      await this.refresh();
+      key = linkedKey(ask.open, this.rows.keys());
+    }
+    if (key) await this.open(key);
+    else void vscode.window.showInformationMessage('That session has ended.');
   }
 
   private hold(claim: string, p: Pending): void {

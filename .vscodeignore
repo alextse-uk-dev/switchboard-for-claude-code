@@ -7,3 +7,5 @@ tsconfig.json
 .gitignore
 **/*.vsix
 docs/**
+mac/**
+scripts/**

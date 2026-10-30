@@ -51,7 +51,9 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **Mac alerts** (macOS, off by default: turn on `switchboard.macAlert.enabled`). When a session needs you or finishes a turn of 60 seconds or more, a notification banner shows, for when the VS Code pop-up can't reach you.
   - While you are at the Mac, the banner shows only if VS Code doesn't already show you the event: none for the tab you're looking at, and none while this window is in front with its own pop-up.
   - Once you have been away for 60 seconds (no key press or mouse move), the banner always shows and a sound plays (Glass by default; any macOS sound, or none).
-  - **Switchboard: Send a Test Mac Alert** shows one. Banners come from Script Editor (macOS runs them through `osascript`), so if none shows, allow notifications for Script Editor in System Settings > Notifications. A click on the banner can't open the session yet.
+  - **A click on the banner brings the session's tab forward**, in the VS Code window that holds it (a background session opens in a new tab, as from the board). The first click asks whether Switchboard may open the link; tick "Do not ask me again" to skip that next time.
+  - Banners come from a small helper app inside the extension, called Switchboard. The first one asks whether Switchboard may send notifications. If you said no, allow them in System Settings > Notifications > Switchboard; until then banners come from Script Editor, and a click on them can't open anything.
+  - **Switchboard: Send a Test Mac Alert** shows one. Click it to check the click too: VS Code comes forward and says it works.
   - Each window's file in the shared storage folder (`windows/<id>.json`) says `"macAlerts": true` while that window gives the whole set (both kinds, with a sound), so another tool that plays its own sounds can stay quiet meanwhile and nothing pings twice. Check that its `pid` is still running: a window that crashed can leave its file behind.
 - **New session (+)**: give it a name, a folder and a first task, then choose its model and effort. A pasted prompt with a slot for your answer is filled in the same way. A summary of all five comes last, and only **Start** opens the tab running `claude -n "<name>" --model <model> --effort <effort> "<task>"`.
   - The model list has Default, Opus, Sonnet, Haiku and Fable (Claude Code's aliases for its latest models), and room to type a full model id. The effort list goes from low to max.
@@ -63,7 +65,7 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 2. When a status file changes, Switchboard reads Claude Code's own session list (`claude agents --json`), adding each file's change time.
 3. Titles, and how each turn ended, come from the end of each session's transcript: Claude's last reply, Claude Code's recap, the context size, a compaction or an error. The cost comes from the whole transcript and those of its helper agents. Only new lines are read after the first look.
 4. A session is matched to its tab through the process tree: the session's parent process is the tab's shell.
-5. A Mac alert runs `osascript` (the banner, its words passed as arguments, never as script) and `afplay` (the sound).
+5. A Mac alert's banner comes from the helper app (`mac/Switchboard.swift`, about 100 lines). The extension copies it into its storage folder, so it keeps one path and one notification permission across updates, and runs it with the banner's words and a `vscode://` link as arguments (no shell). A click starts the helper again if it has quit, and it opens the link: VS Code then brings forward the window that posted the banner, and Switchboard opens the tab. If the helper can't post, `osascript` shows the banner (its words passed as arguments, never as script). The sound is `afplay`.
 6. A phone push is one POST to the ntfy server (HTTPS, or plain HTTP to a server on your own network). The topic, and the access token if you gave one, are kept in VS Code's secret storage (the system keychain), never in settings, since settings can sync. On macOS, how long you have been away is read from `ioreg` (the system's idle time).
 7. "Seen" marks and the to-do list live in the extension's storage folder, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
 8. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
@@ -75,18 +77,18 @@ Nothing leaves your machine, except a phone push once you set one up: then each 
 Until it is on the Marketplace, install it from a `.vsix` file. Download the newest one from [Releases](https://github.com/alextse-uk-dev/switchboard-for-claude-code/releases/latest), then:
 
 ```sh
-code --install-extension switchboard-for-claude-code-0.7.0.vsix
+code --install-extension switchboard-for-claude-code-0.8.0.vsix
 ```
 
 Or build it yourself:
 
 ```sh
 npm install
-npm run package          # tests, then builds switchboard-for-claude-code-<version>.vsix
+npm run package          # tests, the Mac helper, then switchboard-for-claude-code-<version>.vsix
 code --install-extension switchboard-for-claude-code-<version>.vsix
 ```
 
-Then run **Developer: Reload Window**.
+Building the Mac helper needs the Xcode command line tools (`xcode-select --install`). Then run **Developer: Reload Window**.
 
 Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings, so each terminal tab shows the session's title too.
 

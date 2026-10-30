@@ -2,7 +2,7 @@
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
   "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a Mac alert, or a push on your phone, when one needs you while you are away.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -29,7 +29,8 @@
   ],
   "main": "./out/src/extension.js",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -324,7 +325,8 @@
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
     "test": "tsc -p . && node --test \"out/test/*.test.js\"",
-    "package": "npm run test && vsce package"
+    "build:mac": "sh scripts/build-mac.sh",
+    "package": "npm run test && npm run build:mac && vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
