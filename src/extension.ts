@@ -13,12 +13,14 @@ import { modelName } from './core/cost';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
 import { awayMs, maskedTopic, newTopic, parseTopicUrl, pendingVerdict, pushMessage, pushVerdict, tokenProblem, type Pending, type PushTarget } from './core/push';
+import { canReuseTab, closedText, FORGET_AFTER_MS, forgets, offerClaim, reopenOrder, resumeCommand, resumeScript, shouldWrite, toClosedView, verdictOf, type Recoverable } from './core/recover';
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
 import { outcomeOf, type Digest } from './core/transcript';
 import { GROUP_LABEL, GROUP_ORDER, keyOf, type Group, type Outcome, type Session } from './core/types';
 import { PushStore, sendPush, systemIdleMs } from './push';
-import { SharedState, type Peers } from './shared';
-import { claudeConfigDir, findClaude, message, SessionSource, type SessionCost } from './source';
+import { RecoveryStore } from './recovery';
+import { alive, SharedState, type Peers } from './shared';
+import { claudeConfigDir, findClaude, message, processStamp, SessionSource, type SessionCost } from './source';
 import { TodoStore } from './todos';
 
 const VIEW_ID = 'switchboard.sessions';
@@ -27,10 +29,14 @@ const NTFY = 'https://ntfy.sh/';
 const PENDING_TICK_MS = 60_000;
 const DEBOUNCE_MS = 300;
 const TICK_MS = 60_000;
+/** The time between tabs when several sessions reopen, as each one's start is heavy. */
+const RESUME_STAGGER_MS = 500;
 /** How far one `workbench.action.increaseViewSize` moves a side bar's edge, in pixels. */
 const RESIZE_STEP = 60;
 /** The board width last set on its own, so it is set once and the user's own resizing then stands. */
 const WIDTH_KEY = 'switchboard.boardWidthSet';
+/** The shells of this workspace's tabs someone has typed in. VS Code forgets that when its extensions restart. */
+const TOUCHED_KEY = 'switchboard.touchedShells';
 /** The model and effort last chosen for a new session ('' for the default). */
 const LAST_MODEL_KEY = 'switchboard.lastModel';
 const LAST_EFFORT_KEY = 'switchboard.lastEffort';
@@ -144,6 +150,9 @@ const keyArg = (arg: unknown): string | undefined => (typeof arg === 'string' ? 
 
 const config = () => vscode.workspace.getConfiguration('switchboard');
 
+/** What names this window's workspace across restarts. */
+const workspaceKey = () => vscode.workspace.workspaceFile?.fsPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+
 /** Mac alerts are turned on, and this is a Mac. */
 const macAlertsOn = () => process.platform === 'darwin' && config().get<boolean>('macAlert.enabled', false);
 
@@ -183,6 +192,18 @@ class Board implements vscode.Disposable {
   private readonly source: SessionSource;
   private readonly shared: SharedState;
   private readonly todos: TodoStore;
+  private readonly recovery: RecoveryStore;
+  /** Sessions of this window that have ended and will be forgotten after the wait, by session id. */
+  private readonly ending = new Map<string, NodeJS.Timeout>();
+  /** What can be resumed, in the order it reopens. */
+  private closed: Recoverable[] = [];
+  private resuming = false;
+  private offered = false;
+  /** This extension host, as records name their owner. */
+  private me = `${process.pid}|`;
+  private touchedShells = new Set<number>();
+  /** Until the first look, no session is known to be live, so no record can be judged. */
+  private listed = false;
   private readonly push: PushStore;
   private readonly mac: MacHelper;
   /** The last reason a clickable banner fell back to osascript, so the log says it once. */
@@ -214,7 +235,7 @@ class Board implements vscode.Disposable {
   private peers: Peers = { owned: new Set(), focusedAt: 0, blurredAt: 0, focusedNow: false };
   private rows = new Map<string, Row>();
 
-  private running = false;
+  private refreshing?: Promise<void>;
   private again = false;
   private debounce?: NodeJS.Timeout;
   private tick?: NodeJS.Timeout;
@@ -223,6 +244,7 @@ class Board implements vscode.Disposable {
     this.source = new SessionSource(claudeConfigDir(), () => this.claudePath(), (m) => this.log.warn(m));
     this.shared = new SharedState(ctx.globalStorageUri.fsPath, randomUUID());
     this.todos = new TodoStore(ctx.globalStorageUri.fsPath);
+    this.recovery = new RecoveryStore(ctx.globalStorageUri.fsPath);
     this.push = new PushStore(ctx.secrets);
     this.mac = new MacHelper(path.join(ctx.extensionPath, 'out', 'mac'), ctx.globalStorageUri.fsPath);
     this.board = new BoardView(vscode.Uri.joinPath(ctx.extensionUri, 'media'), (m) => void this.fromBoard(m));
@@ -233,6 +255,9 @@ class Board implements vscode.Disposable {
   async start(): Promise<void> {
     await this.shared.init(Date.now());
     await this.safe(this.todos.load(), false);
+    await this.safe(this.recovery.init(), undefined);
+    this.me = (await processStamp(process.pid)) ?? this.me;
+    this.touchedShells = new Set(this.ctx.workspaceState.get<number[]>(TOUCHED_KEY, []).filter(alive));
     await this.push.load().catch((e) => this.log.warn(`Phone push: ${message(e)}`));
     if (vscode.window.state.focused) await this.safe(this.shared.noteFocused(Date.now()), undefined);
     await this.safe(this.shared.noteMacAlerts(allMacAlerts()), undefined);
@@ -251,6 +276,7 @@ class Board implements vscode.Disposable {
       vscode.commands.registerCommand('switchboard.markAllSeen', () => this.markAllSeen()),
       vscode.commands.registerCommand('switchboard.startNext', (arg) => this.startNext(keyArg(arg))),
       vscode.commands.registerCommand('switchboard.addTodo', () => this.addTodo()),
+      vscode.commands.registerCommand('switchboard.resumeAll', () => this.resumeClosed()),
       vscode.commands.registerCommand('switchboard.fitWidth', () => this.fitWidthNow()),
       vscode.commands.registerCommand('switchboard.phonePush.setup', () => this.setUpPush()),
       vscode.commands.registerCommand('switchboard.phonePush.test', () => this.testPush()),
@@ -270,6 +296,7 @@ class Board implements vscode.Disposable {
         void this.noteLooking();
       }),
       w.onDidOpenTerminal(() => this.schedule()),
+      w.onDidChangeTerminalState((t) => void this.noteTouched(t)),
       w.onDidCloseTerminal((t) => {
         for (const [key, tab] of this.attachTabs) if (tab === t) this.attachTabs.delete(key);
         this.schedule();
@@ -290,6 +317,8 @@ class Board implements vscode.Disposable {
     this.watch(this.shared.dir, (file) => {
       if (file === null || file === TodoStore.FILE) void this.safe(this.todos.load(), false).then((changed) => changed && this.render());
     });
+    // Another window took or wrote a record.
+    this.watch(this.recovery.dir, () => void this.safe(this.recovery.load(), undefined).then(() => this.judgeRecords()));
     this.tick = setInterval(() => {
       if (this.board.visible || vscode.window.state.focused) this.schedule();
     }, TICK_MS);
@@ -338,12 +367,19 @@ class Board implements vscode.Disposable {
     }, DEBOUNCE_MS);
   }
 
-  async refresh(): Promise<void> {
-    if (this.running) {
+  /** Resolves once the board is up to date, also when a refresh was already running. */
+  refresh(): Promise<void> {
+    if (this.refreshing) {
       this.again = true;
-      return;
+      return this.refreshing;
     }
-    this.running = true;
+    this.refreshing = this.refreshLoop().finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
+  private async refreshLoop(): Promise<void> {
     try {
       do {
         this.again = false;
@@ -351,8 +387,6 @@ class Board implements vscode.Disposable {
       } while (this.again);
     } catch (e) {
       this.log.error(`Refresh failed: ${message(e)}`);
-    } finally {
-      this.running = false;
     }
   }
 
@@ -361,6 +395,7 @@ class Board implements vscode.Disposable {
     const sessions = await this.source.list(now);
     const { events, fresh } = this.tracker.update(sessions, now);
     this.sessions = sessions;
+    this.listed = true;
     this.source.forget(new Set(sessions.map((s) => s.sessionId)));
 
     this.tabs = await this.matchTabs(sessions);
@@ -382,13 +417,217 @@ class Board implements vscode.Disposable {
     const digests = await Promise.all(sessions.map((s) => this.source.digestOf(s, now)));
     this.digests = new Map(sessions.flatMap((s, i): Array<[string, Digest]> => (digests[i] ? [[s.sessionId, digests[i]]] : [])));
     await this.pickAsks(sessions);
+    await this.safe(this.noteForRecovery(sessions), undefined);
     this.render();
+    void this.offerClosed();
     for (const e of events) {
       void this.maybePop(e, looking);
       void this.maybePush(e, looking);
       void this.maybeAlert(e, looking);
     }
     await this.countCosts(sessions);
+  }
+
+  /**
+   * Keeps a record of each session held in one of this window's tabs, for
+   * reopening it after VS Code closes. A session with no transcript yet has
+   * nothing to resume, so it gets none.
+   */
+  private async noteForRecovery(sessions: readonly Session[]): Promise<void> {
+    const terminals = vscode.window.terminals;
+    const ownerAlive = await this.ownerCheck();
+    for (const s of sessions) {
+      const tab = this.tabs.get(keyOf(s));
+      const digest = this.digests.get(s.sessionId);
+      if (!tab || s.kind !== 'interactive' || !digest) continue;
+      const next: Recoverable = {
+        sessionId: s.sessionId,
+        title: displayTitle(s, digest),
+        cwd: s.cwd,
+        effort: digest.effort?.v,
+        status: s.status,
+        activeAt: s.statusUpdatedAt ?? s.startedAt,
+        tab: terminals.indexOf(tab),
+        workspace: workspaceKey(),
+        owner: this.me,
+      };
+      if (shouldWrite(this.recovery.get(s.sessionId), next, ownerAlive)) await this.recovery.write(next);
+    }
+    await this.judgeRecords();
+  }
+
+  /** Sorts the records into those to offer, those to forget and those to leave alone. */
+  private async judgeRecords(): Promise<void> {
+    if (!this.listed) return;
+    const live = new Set(this.sessions.map((s) => s.sessionId));
+    const now = Date.now();
+    const ownerAlive = await this.ownerCheck();
+    const closed: Recoverable[] = [];
+    for (const r of this.recovery.list) {
+      const v = verdictOf(r, { live: live.has(r.sessionId), me: this.me, ownerAlive, now });
+      if (forgets(v)) this.forgetSoon(r.sessionId);
+      else this.stopForgetting(r.sessionId);
+      if (v === 'closed') closed.push(r);
+      else if (v === 'drop') await this.safe(this.recovery.take(r.sessionId), false);
+    }
+    const before = this.closed;
+    this.closed = reopenOrder(closed);
+    if (JSON.stringify(before) !== JSON.stringify(this.closed)) this.render();
+  }
+
+  /** Which owners of the records on file still run. One that can't be checked counts as running: its record stays. */
+  private async ownerCheck(): Promise<(owner: string) => boolean> {
+    const running = new Set<string>([this.me]);
+    await Promise.all(
+      [...new Set(this.recovery.list.map((r) => r.owner))].map(async (o) => {
+        const pid = parseInt(o, 10);
+        if (o === this.me || !alive(pid)) return;
+        const stamp = await processStamp(pid);
+        if (stamp === undefined || stamp === o) running.add(o);
+      }),
+    );
+    return (o) => running.has(o);
+  }
+
+  /**
+   * Forgets a session after the wait, if nothing has changed by then. If VS
+   * Code is quitting, this window is gone first. Everything is read afresh:
+   * a session can die without anything telling this window.
+   */
+  private forgetSoon(id: string): void {
+    if (this.ending.has(id)) return;
+    this.ending.set(id, setTimeout(() => {
+      this.ending.delete(id);
+      void this.safe(this.forgetIfStill(id), undefined);
+    }, FORGET_AFTER_MS));
+  }
+
+  private async forgetIfStill(id: string): Promise<void> {
+    await this.recovery.load();
+    const r = this.recovery.get(id);
+    if (!r) return;
+    const now = Date.now();
+    const sessions = await this.source.list(now);
+    const v = verdictOf(r, { live: sessions.some((s) => s.sessionId === id), me: this.me, ownerAlive: await this.ownerCheck(), now });
+    if (forgets(v)) await this.recovery.take(id);
+    else await this.judgeRecords();
+  }
+
+  /** Keeps the fact that someone typed in a tab past a reload, which resets it. */
+  private async noteTouched(t: vscode.Terminal): Promise<void> {
+    if (!t.state.isInteractedWith) return;
+    const pid = await this.shellPid(t);
+    if (!pid || this.touchedShells.has(pid)) return;
+    this.touchedShells.add(pid);
+    await this.ctx.workspaceState.update(TOUCHED_KEY, [...this.touchedShells]);
+  }
+
+  private stopForgetting(id: string): void {
+    clearTimeout(this.ending.get(id));
+    this.ending.delete(id);
+  }
+
+  /** Says once, on opening, that sessions closed with VS Code can be resumed: the board may be out of view. */
+  private async offerClosed(): Promise<void> {
+    if (this.offered) return;
+    this.offered = true;
+    if (!this.closed.length || !config().get<boolean>('closedSessions.notify', true)) return;
+    if (!(await this.safe(this.shared.claim(offerClaim(this.closed)), true))) return;
+    const pick = await vscode.window.showInformationMessage(closedText(this.closed.length), 'Resume all', 'Show');
+    if (pick === 'Resume all') await this.resumeClosed();
+    else if (pick === 'Show') await vscode.commands.executeCommand('workbench.view.extension.switchboard');
+  }
+
+  /**
+   * Reopens closed sessions in their old folders and in the order the tabs
+   * had: all of them, or just the one named. VS Code brings tabs back after a
+   * quit as empty shells, so each session goes back in its old tab where it
+   * can (see `revivedTab`), else in a new one. A session whose folder has
+   * gone stays on the list, with a warning.
+   */
+  private async resumeClosed(id?: string): Promise<void> {
+    if (this.resuming) return;
+    this.resuming = true;
+    try {
+      // The list may be behind: a session may have reopened in the meantime.
+      await this.refresh();
+      const todo = this.closed.filter((r) => !id || r.sessionId === id);
+      if (!todo.length) {
+        if (!id) void vscode.window.showInformationMessage('No closed sessions to resume.');
+        return;
+      }
+      const claude = await this.claudePath();
+      if (!claude) {
+        void vscode.window.showErrorMessage('Switchboard could not find the claude command, so nothing was resumed. Set switchboard.claudePath.');
+        return;
+      }
+      const shell = vscode.env.shell || process.env.SHELL || '/bin/zsh';
+      const gone: string[] = [];
+      const failed: string[] = [];
+      let first: vscode.Terminal | undefined;
+      const used = new Set<vscode.Terminal>();
+      for (const r of todo) {
+        if (!(await isFolder(r.cwd))) {
+          gone.push(r.title);
+          continue;
+        }
+        // Another window got there first.
+        if (!(await this.safe(this.recovery.take(r.sessionId), false))) continue;
+        if (first) await new Promise((done) => setTimeout(done, RESUME_STAGGER_MS));
+        let t: vscode.Terminal;
+        try {
+          const command = resumeCommand(claude, r);
+          const old = await this.revivedTab(r, used);
+          if (old) {
+            used.add(old);
+            await this.runInTab(old, resumeScript(r.cwd, command));
+          }
+          t = old ?? (await this.onceTab(r.title, r.cwd, command, 'history', shell));
+        } catch (e) {
+          // Back on the list, to try again.
+          this.log.warn(`Could not resume ${r.sessionId}: ${message(e)}`);
+          failed.push(r.title);
+          await this.safe(this.recovery.write(r), undefined);
+          continue;
+        }
+        first ??= t;
+        this.closed = this.closed.filter((c) => c.sessionId !== r.sessionId);
+        this.render();
+      }
+      // One session takes the keyboard; several leave it where it was.
+      first?.show(todo.length > 1);
+      if (failed.length) void vscode.window.showWarningMessage(`Switchboard could not resume ${failed.join(', ')}. They stay on the board; the Switchboard output channel says why.`);
+      if (gone.length) void vscode.window.showWarningMessage(`Switchboard could not resume ${gone.join(', ')}: the folder is gone. Restore the folder, or dismiss it from the board.`);
+    } finally {
+      this.resuming = false;
+      this.schedule();
+    }
+  }
+
+  /** The tab at a session's old place, if it is safe to take over. */
+  private async revivedTab(r: Recoverable, used: ReadonlySet<vscode.Terminal>): Promise<vscode.Terminal | undefined> {
+    const t = vscode.window.terminals[r.tab];
+    if (!t || used.has(t)) return undefined;
+    const pid = await this.shellPid(t);
+    const touched = t.state.isInteractedWith || t.exitStatus !== undefined || (pid !== undefined && this.touchedShells.has(pid));
+    const busy = pid === undefined || !(await this.source.idleShell(pid));
+    return canReuseTab({ sameWorkspace: r.workspace === workspaceKey(), touched, busy }) ? t : undefined;
+  }
+
+  /** Has a tab's shell run a one-shot script from a file, as its shell may be zsh, bash or fish. */
+  private async runInTab(tab: vscode.Terminal, script: string): Promise<void> {
+    tab.sendText(`sh ${shq(await this.scriptFile(script))}`, true);
+  }
+
+  private async scriptFile(script: string): Promise<string> {
+    const file = path.join(os.tmpdir(), `switchboard-${randomUUID()}.sh`);
+    await fs.writeFile(file, script, { mode: 0o600 });
+    return file;
+  }
+
+  private async dismissClosed(id?: string): Promise<void> {
+    for (const r of this.closed.filter((c) => !id || c.sessionId === id)) await this.safe(this.recovery.take(r.sessionId), false);
+    await this.judgeRecords();
   }
 
   /**
@@ -553,10 +792,14 @@ class Board implements vscode.Disposable {
     this.cards = new Map(cards.map((c) => [c.key, c]));
     const todos = this.todoViews(rows);
     const open = todos.filter((t) => !t.doneAt).length;
-    const badge = counts.needs + unread ? { value: counts.needs + unread, tooltip: counterText(counts, unread) } : undefined;
-    this.board.set(cards, todos, badge);
+    const n = this.closed.length;
+    const closedWords = n ? `${n} closed` : '';
+    const attention = counts.needs + unread + n;
+    const badge = attention ? { value: attention, tooltip: [counterText(counts, unread), closedWords].filter(Boolean).join(' · ') } : undefined;
+    this.board.set(cards, todos, this.closed.map((r) => toClosedView(r, home)), badge);
     void vscode.commands.executeCommand('setContext', 'switchboard.hasUnread', unread > 0);
-    this.renderStatus(counts, unread, sorted, open);
+    void vscode.commands.executeCommand('setContext', 'switchboard.hasClosed', n > 0);
+    this.renderStatus(counts, unread, sorted, open, closedWords);
   }
 
   /** The list as the page draws it: open items newest first, then done ones, most recently done first. */
@@ -576,14 +819,14 @@ class Board implements vscode.Disposable {
     }));
   }
 
-  private renderStatus(counts: Record<Group, number>, unread: number, rows: readonly Row[], todos: number): void {
+  private renderStatus(counts: Record<Group, number>, unread: number, rows: readonly Row[], todos: number, closed: string): void {
     const sessions = counterText(counts, unread);
-    const text = [sessions, todos ? `${todos} to do` : ''].filter(Boolean).join(' · ');
+    const text = [sessions, closed, todos ? `${todos} to do` : ''].filter(Boolean).join(' · ');
     if (!text || !config().get<boolean>('statusBar.enabled', true)) {
       this.status.hide();
       return;
     }
-    const icon = counts.needs ? '$(bell-dot)' : unread ? '$(pass)' : counts.working ? '$(pulse)' : '$(circle-outline)';
+    const icon = counts.needs ? '$(bell-dot)' : unread ? '$(pass)' : counts.working ? '$(pulse)' : closed ? '$(history)' : '$(circle-outline)';
     this.status.text = `${icon} ${text}`;
     this.status.backgroundColor = counts.needs ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
     const tip = new vscode.MarkdownString();
@@ -591,6 +834,7 @@ class Board implements vscode.Disposable {
       const mine = rows.filter((r) => r.group === g);
       if (mine.length) tip.appendMarkdown(`**${GROUP_LABEL[g]} (${mine.length})**: ${mine.map((r) => escapeMd(r.title)).join(', ')}  \n`);
     }
+    if (closed) tip.appendMarkdown(`**Closed with VS Code**: ${this.closed.map((r) => escapeMd(r.title)).join(', ')}  \n`);
     if (todos) tip.appendMarkdown(`**To do**: ${todos} open  \n`);
     if (this.push.peek()) tip.appendMarkdown(`**Phone push**: on${config().get<string>('phonePush.when', 'away') === 'always' ? '' : `, when you're away ${config().get<number>('phonePush.awayMinutes', 3)} min`}  \n`);
     tip.appendMarkdown('\nClick to open Switchboard.');
@@ -921,6 +1165,14 @@ class Board implements vscode.Disposable {
       }
       case 'new':
         return this.newSession();
+      case 'resumeAll':
+        return this.resumeClosed();
+      case 'resume':
+        return this.resumeClosed(m.id);
+      case 'dismissClosed':
+        return this.dismissClosed(m.id);
+      case 'dismissAllClosed':
+        return this.dismissClosed();
       case 'todo':
         return this.cardToTodo(m.key);
       case 'todoAdd':
@@ -1078,15 +1330,26 @@ class Board implements vscode.Disposable {
   /**
    * A terminal tab that runs one command. The command is always run by
    * /bin/sh, whose quoting `shq` is written for: the user's own shell may be
-   * fish or PowerShell, which read quotes differently. `then` is an optional
-   * program to `exec` afterwards (given as $0, so it needs no quoting).
+   * fish or PowerShell, which read quotes differently.
    */
-  private shellTab(name: string, cwd: string, command: string, icon: string, then?: string): vscode.Terminal {
+  private shellTab(name: string, cwd: string, command: string, icon: string): vscode.Terminal {
+    return vscode.window.createTerminal({ name, cwd, shellPath: '/bin/sh', shellArgs: ['-c', command], iconPath: new vscode.ThemeIcon(icon) });
+  }
+
+  /**
+   * A tab that runs a command once, then the user's shell. VS Code restarts a
+   * tab's start-up command when it brings the tab back after a quit, which
+   * would start a session again by itself, first message and all. So the
+   * command sits in a file that deletes itself: brought back, the tab is just
+   * a shell. `shell` and the file are $0 and $1, so they need no quoting.
+   */
+  private async onceTab(name: string, cwd: string, command: string, icon: string, shell: string): Promise<vscode.Terminal> {
+    const file = await this.scriptFile(inTabScript(command));
     return vscode.window.createTerminal({
       name,
       cwd,
       shellPath: '/bin/sh',
-      shellArgs: then ? ['-c', `${command}; exec "$0" -l`, then] : ['-c', command],
+      shellArgs: ['-c', '[ -f "$1" ] && sh "$1"; exec "$0" -l', shell, file],
       iconPath: new vscode.ThemeIcon(icon),
     });
   }
@@ -1204,12 +1467,10 @@ class Board implements vscode.Disposable {
     if (!vscode.window.terminals.includes(tab)) return false;
     const claude = (await this.claudePath()) ?? 'claude';
     const command = launchCommand({ claude, name: l.name, model: l.model, effort: l.effort, task: l.task });
-    // A file, because the user's shell may be zsh, bash or fish, and a long first message would echo line by line.
-    const file = path.join(os.tmpdir(), `switchboard-${randomUUID()}.sh`);
-    await fs.writeFile(file, inTabScript(command), { mode: 0o600 });
     // The shell prints its prompt after claude exits; text sent before that would be lost to claude.
     await new Promise((r) => setTimeout(r, 300));
-    tab.sendText(`sh ${shq(file)}`, true);
+    // A file also keeps a long first message from echoing line by line.
+    await this.runInTab(tab, inTabScript(command));
     tab.show(false);
     this.schedule();
     return true;
@@ -1317,7 +1578,7 @@ class Board implements vscode.Disposable {
     const command = launchCommand({ claude, name: l.name, model: l.model, effort: l.effort, task: l.task });
     // The user's shell takes over after claude exits, like a tab they opened.
     const shell = vscode.env.shell || process.env.SHELL || '/bin/zsh';
-    const t = this.shellTab(l.name.trim() || 'Claude Code', l.cwd, command, 'sparkle', shell);
+    const t = await this.onceTab(l.name.trim() || 'Claude Code', l.cwd, command, 'sparkle', shell);
     t.show(false);
     this.schedule();
   }
@@ -1349,21 +1610,15 @@ class Board implements vscode.Disposable {
     clearTimeout(this.debounce);
     clearInterval(this.tick);
     clearInterval(this.pendingTick);
+    for (const t of this.ending.values()) clearTimeout(t);
     for (const w of this.watchers) w.close();
     for (const d of this.disposables) d.dispose();
     void this.shared.dispose();
   }
 }
 
-/** Whether a process is still running. */
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    // EPERM: it runs, as someone else.
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
+async function isFolder(p: string): Promise<boolean> {
+  return fs.stat(p).then((st) => st.isDirectory(), () => false);
 }
 
 /** Resolves once `done` holds, checking every 100 ms, or after `ms` regardless. */

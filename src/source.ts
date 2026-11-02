@@ -3,6 +3,7 @@ import { constants as fsc, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { countLines, emptyCost, sumTallies, type CostState, type Tally } from './core/cost';
+import { isShellCommand } from './core/recover';
 import { lineage, parseAgentsJson, parsePs, projectSlug, toSession, withFileFields } from './core/parse';
 import { readChunk, type Digest } from './core/transcript';
 import type { Session } from './core/types';
@@ -129,7 +130,8 @@ export class SessionSource {
       this.log('claude agents --json listed none of the running sessions, so the status files are read directly.');
       return live;
     }
-    return sessions.map((s) => withFileFields(s, files.get(s.pid)));
+    // A list reused from a moment ago may name a process that has since gone without a word.
+    return sessions.filter((s) => alive(s.pid)).map((s) => withFileFields(s, files.get(s.pid)));
   }
 
   private async readStatusFiles(): Promise<Map<number, Session>> {
@@ -299,10 +301,33 @@ export class SessionSource {
     return new Map(pids.map((p) => [p, lineage(p, this.parents)]));
   }
 
+  /** Whether a process is a shell running nothing. Says false if that can't be told, which is the careful answer. */
+  async idleShell(pid: number): Promise<boolean> {
+    try {
+      if (!isShellCommand(await run('ps', ['-o', 'comm=', '-p', String(pid)], 4000))) return false;
+      this.parents = parsePs(await run('ps', ['-A', '-o', 'pid=,ppid='], 4000));
+    } catch (e) {
+      this.log(`ps failed: ${message(e)}`);
+      return false;
+    }
+    for (const parent of this.parents.values()) if (parent === pid) return false;
+    return true;
+  }
+
   /** Drops cached state for sessions that have ended. */
   forget(liveIds: ReadonlySet<string>): void {
     for (const id of this.transcripts.keys()) if (!liveIds.has(id)) this.transcripts.delete(id);
     for (const id of this.costs.keys()) if (!liveIds.has(id)) this.costs.delete(id);
+  }
+}
+
+/** A running process's identity, which no later process with its number shares. Undefined if it can't be told. */
+export async function processStamp(pid: number): Promise<string | undefined> {
+  try {
+    const started = (await run('ps', ['-o', 'lstart=', '-p', String(pid)], 4000)).trim();
+    return started ? `${pid}|${started}` : undefined;
+  } catch {
+    return undefined;
   }
 }
 

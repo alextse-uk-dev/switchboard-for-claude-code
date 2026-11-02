@@ -9,6 +9,7 @@
   --radius: 6px;
 }
 
+.g-closed { --accent: var(--vscode-terminal-ansiMagenta, #bc3fbc); }
 .g-todo { --accent: var(--vscode-terminal-ansiCyan, #29b8db); }
 .g-needs { --accent: var(--vscode-charts-orange, #d18616); }
 .g-reply { --accent: var(--vscode-charts-yellow, #cca700); }
@@ -396,7 +397,7 @@ button {
   justify-content: center;
   opacity: 0;
 }
-.todo:hover .x, .todo:focus-within .x { opacity: 1; }
+.todo:hover .x, .todo:focus-within .x, .closed-row:hover .x, .closed-row:focus-within .x { opacity: 1; }
 .x:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
 .todo-empty { margin: 0 2px 2px; font-size: 12px; color: var(--muted); }
 .todo-add { display: flex; gap: 6px; margin-top: 2px; }
@@ -434,6 +435,24 @@ button {
   background: var(--vscode-button-background);
 }
 .btn.primary:hover { background: var(--vscode-button-hoverBackground); }
+
+/* --- Closed with VS Code ---------------------------------------------- */
+
+.closed-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.closed-list { display: flex; flex-direction: column; gap: 2px; }
+.closed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 2px 5px 8px;
+  border-radius: 4px;
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.closed-row:hover { background: var(--vscode-list-hoverBackground); }
+.closed-body { flex: 1; min-width: 0; }
+.closed-title { font-weight: 500; overflow-wrap: anywhere; }
+.closed-row .meta { margin: 1px 0 0; padding: 0; }
+.closed-row .btn { flex: none; }
 
 /* --- Motion: working spins, a waiting card breathes ------------------- */
 

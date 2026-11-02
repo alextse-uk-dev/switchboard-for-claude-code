@@ -2,7 +2,7 @@
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
   "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a Mac alert, or a push on your phone, when one needs you while you are away.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -95,6 +95,12 @@
         "category": "Switchboard"
       },
       {
+        "command": "switchboard.resumeAll",
+        "title": "Resume All Closed Sessions",
+        "category": "Switchboard",
+        "icon": "$(history)"
+      },
+      {
         "command": "switchboard.addTodo",
         "title": "Add a To-do",
         "category": "Switchboard",
@@ -129,6 +135,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "switchboard.resumeAll",
+          "when": "view == switchboard.sessions && switchboard.hasClosed",
+          "group": "navigation@0"
+        },
         {
           "command": "switchboard.newSession",
           "when": "view == switchboard.sessions",
@@ -306,6 +317,11 @@
           "type": "boolean",
           "default": true,
           "description": "Start next session ends the old session and starts the new one in its terminal tab, when that tab is in this window and the old session is not working. The old session's history is kept (claude --resume reopens it). Off: the new session opens in a tab of its own and the old one stays open."
+        },
+        "switchboard.closedSessions.notify": {
+          "type": "boolean",
+          "default": true,
+          "description": "On opening VS Code, say when sessions closed along with it, with a button that resumes them all. The board lists them either way."
         },
         "switchboard.statusBar.enabled": {
           "type": "boolean",

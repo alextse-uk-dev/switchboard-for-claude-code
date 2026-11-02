@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+
+- **A session Switchboard started no longer starts again by itself after a restart.** VS Code re-runs a tab's start-up command when it brings the tab back, so a tab from New session or Start next session ran `claude` again after a quit, first message included. Such a tab now comes back as a plain shell.
+- **Resume every session VS Code closed.** Quitting VS Code ends every Claude Code session in its terminal tabs. After a quit, a crash or a restart of the Mac, the board has a **Closed with VS Code** section at the top: **Resume all** brings every session back in one click, each with its own folder, model and effort. Each row also has its own **Resume** and a dismiss button.
+  - Each session goes back in its old tab, with its scrollback above it, when VS Code has brought that tab back as an empty shell. A tab you have typed in, one running something, or one from another workspace is left alone: that session opens in a new tab.
+  - A session you ended yourself (a tab you closed, or /exit) is not offered; `claude --resume` still finds it. Neither is one still running, such as after a Reload Window, or one with no conversation yet.
+  - A pop-up says so on opening (`switchboard.closedSessions.notify`), and the activity bar badge and status bar count them. **Switchboard: Resume All Closed Sessions** does the same from the Command Palette or the board's title bar. Closed sessions stay on offer for 14 days.
+
 ## 0.8.0
 
 - **A click on a Mac alert's banner brings the session's tab forward**, in the VS Code window that holds it. A background session opens in a new tab, as from the board, and a session resumed since under a new process is still found.

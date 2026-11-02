@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { Card } from './core/card';
 import { asMessage, type FromBoard, type TodoView } from './core/messages';
+import type { ClosedView } from './core/recover';
 import { GROUP_LABEL, GROUP_ORDER } from './core/types';
 
 export type { FromBoard, TodoView };
@@ -15,6 +16,7 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
   private view?: vscode.WebviewView;
   private cards: readonly Card[] = [];
   private todos: readonly TodoView[] = [];
+  private closed: readonly ClosedView[] = [];
   private badge?: vscode.ViewBadge;
   private readonly shown = new vscode.EventEmitter<void>();
   /** Fires when the board comes into view. */
@@ -57,9 +59,10 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
     this.shown.fire();
   }
 
-  set(cards: readonly Card[], todos: readonly TodoView[], badge: vscode.ViewBadge | undefined): void {
+  set(cards: readonly Card[], todos: readonly TodoView[], closed: readonly ClosedView[], badge: vscode.ViewBadge | undefined): void {
     this.cards = cards;
     this.todos = todos;
+    this.closed = closed;
     this.badge = badge;
     if (!this.view) return;
     this.view.badge = badge;
@@ -67,7 +70,7 @@ export class BoardView implements vscode.WebviewViewProvider, vscode.Disposable 
   }
 
   private post(): void {
-    void this.view?.webview.postMessage({ type: 'state', cards: this.cards, todos: this.todos, order: GROUP_ORDER, labels: GROUP_LABEL });
+    void this.view?.webview.postMessage({ type: 'state', cards: this.cards, todos: this.todos, closed: this.closed, order: GROUP_ORDER, labels: GROUP_LABEL });
   }
 
   private html(webview: vscode.Webview): string {

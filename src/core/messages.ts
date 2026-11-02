@@ -1,3 +1,4 @@
+import { isSessionId } from './recover';
 import { MAX_TODO } from './todo';
 
 /** A to-do as the page draws it. */
@@ -19,7 +20,8 @@ export interface TodoView {
  */
 export type FromBoard =
   | { type: 'open' | 'seen' | 'next' | 'copy' | 'todo'; key: string }
-  | { type: 'new' | 'todoClear' }
+  | { type: 'new' | 'todoClear' | 'resumeAll' | 'dismissAllClosed' }
+  | { type: 'resume' | 'dismissClosed'; id: string }
   | { type: 'todoAdd'; text: string }
   | { type: 'todoDone'; id: string; done: boolean }
   | { type: 'todoDelete'; id: string };
@@ -37,7 +39,12 @@ export function asMessage(m: unknown): FromBoard | 'ready' | { type: 'width'; px
       return 'ready';
     case 'new':
     case 'todoClear':
+    case 'resumeAll':
+    case 'dismissAllClosed':
       return { type: r.type };
+    case 'resume':
+    case 'dismissClosed':
+      return typeof r.id === 'string' && isSessionId(r.id) ? { type: r.type, id: r.id } : undefined;
     case 'width':
       return typeof r.px === 'number' && Number.isFinite(r.px) && r.px > 0 ? { type: 'width', px: Math.round(r.px) } : undefined;
     case 'todoAdd':

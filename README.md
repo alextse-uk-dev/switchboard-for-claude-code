@@ -59,6 +59,10 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
   - The model list has Default, Opus, Sonnet, Haiku and Fable (Claude Code's aliases for its latest models), and room to type a full model id. The effort list goes from low to max.
   - Each list opens on your last choice. "Default" passes nothing, so your Claude Code settings decide; it says what they would pick, reading the project's `.claude/settings.json` before your own.
 
+### Resume what VS Code closed
+
+Quitting VS Code ends every Claude Code session in its terminal tabs. Switchboard keeps a short record of each one while it runs, so after a quit, a crash or a restart of the Mac the board opens with a **Closed with VS Code** section. **Resume all** brings them all back, each in its own folder with its own model and effort, in the order the tabs had. Each goes back in its old tab when VS Code has restored that tab as an empty shell, and in a new tab otherwise. Sessions you ended yourself are not offered, and nothing is resumed until you press the button.
+
 ## How it works
 
 1. Claude Code keeps a small status file per running session (`~/.claude/sessions/<pid>.json`): busy, waiting or idle. Switchboard watches that folder, so it does nothing while nothing changes.
@@ -117,6 +121,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.todos.fromReplies` | `true` | Add what Claude's replies ask of you to the to-do list, and clear it once the session moves on. |
 | `switchboard.newSession.chooseModel` | `true` | Ask for the model and effort before starting a session. |
 | `switchboard.startNext.sameTab` | `true` | Start next session ends the old session and starts the new one in its tab. Off: a tab of its own, and the old session stays open. |
+| `switchboard.closedSessions.notify` | `true` | On opening, say when sessions closed along with VS Code, with a button that resumes them all. The board lists them either way. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 
@@ -126,6 +131,8 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 - "Waiting for your reply" and "Start a new session" are read from the words of Claude's last reply (a question in its last lines, words that wait on you such as "the only thing left is your OK", or words such as "kickoff prompt" or "next session"), and from Claude Code's own recap when it came later ("Next: reply …"). The card always shows the words it went by, so you can judge.
 - A VS Code window can only bring forward its own tabs. A session in another window, or in another terminal app, is listed ("other window", "outside VS Code"), but a click can't jump there yet.
 - "Looking at it" means its terminal is the active one in a focused window. VS Code doesn't say whether the terminal panel itself is visible.
+- **Resume all** opens every closed session in the window you press it in, including those from another workspace, which get new tabs there. To keep windows apart, use each row's own **Resume** in the window it belongs to.
+- A session is only known to Switchboard while Switchboard runs, so one that was already closed before the extension started is not offered. `claude --resume` still finds it.
 - A session started by another session (by a hook or a tool) is listed as "inside another session" and has no tab of its own.
 - **Width.** VS Code has no setting for a side bar's width, and its resize commands act only on the part that has focus (a webview doesn't count). So, to set the default width, Switchboard opens Explorer for a moment, widens the side bar in steps of 60 pixels, and comes back. It lands within about one step of the setting. If you have moved Switchboard out of the primary side bar, drag its edge instead.
 - **Cost** is an estimate from the token counts Claude Code writes into each transcript, at the list prices built into this version (October 2026). On a Claude plan it is what the same tokens would cost on the API, not what you pay. A model it has no price for is left out, and the cost then shows a `+`.

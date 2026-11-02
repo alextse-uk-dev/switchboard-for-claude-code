@@ -44,6 +44,7 @@
   /** The summary pill's words for n sessions in a section. @type {Record<string, (n: number) => string>} */
   const SHORT = {
     todo: () => 'to do',
+    closed: () => 'closed',
     needs: (n) => (n === 1 ? 'needs you' : 'need you'),
     reply: () => 'to reply',
     handoff: (n) => (n === 1 ? 'new session' : 'new sessions'),
@@ -56,6 +57,7 @@
 
   /** 16×16 line icons, drawn in the section's colour. */
   const ICON = {
+    closed: ['M3 8a5 5 0 1 0 1.6-3.7', 'M2.7 2.6v2.7h2.7', 'M8 5.2V8l2 1.2'],
     todo: ['M2.8 3.2h2.4v2.4H2.8z', 'M7.4 4.4h5.8', 'M2.8 10.4h2.4v2.4H2.8z', 'M7.4 11.6h5.8', 'M3.3 8.1l.9.9 1.6-1.8'],
     needs: ['M8 2a3.6 3.6 0 0 0-3.6 3.6v2.6L3 10.6h10l-1.4-2.4V5.6A3.6 3.6 0 0 0 8 2z', 'M6.6 12.6a1.5 1.5 0 0 0 2.8 0'],
     reply: ['M2.5 3.5h11v7.2H8.2L5 13.2v-2.5H2.5z', 'M6.6 5.9a1.4 1.4 0 1 1 2 1.3c-.4.2-.6.5-.6.9', 'M8 9.4v.01'],
@@ -204,12 +206,13 @@
 
     const summary = el('nav', 'summary');
     summary.setAttribute('aria-label', 'Sessions by state');
-    const pills = [{ g: 'todo', n: openTodos.length, unread: 0, tip: `To do: ${openTodos.length} open` }];
+    const closed = /** @type {any[]} */ (state.closed || []);
+    const pills = [{ g: 'closed', n: closed.length, unread: 0, tip: `Closed with VS Code: ${closed.map((c) => c.title).join(', ')}` }, { g: 'todo', n: openTodos.length, unread: 0, tip: `To do: ${openTodos.length} open` }];
     for (const { g, mine } of groups) {
       pills.push({ g, n: mine.length, unread: mine.filter((c) => c.unread).length, tip: `${state.labels[g]}: ${mine.map((c) => c.title).join(', ')}` });
     }
     for (const p of pills) {
-      if (p.g === 'todo' && !p.n) continue;
+      if ((p.g === 'todo' || p.g === 'closed') && !p.n) continue;
       const pill = named(button('', `pill g-${p.g}`, () => {
         ui.folded[p.g] = false;
         vscode.setState(ui);
@@ -223,6 +226,7 @@
     }
     if (summary.childElementCount) board.append(summary);
 
+    if (closed.length) board.append(closedSection(closed));
     board.append(todoSection(todos, openTodos));
 
     if (!cards.length) {
@@ -299,6 +303,43 @@
     head.append(el('span', `chev${folded ? ' folded' : ''}`), icon(g), el('span', 'group-label', label), el('span', 'count', String(count)));
     section.append(head);
     return { section, folded };
+  }
+
+  /** Sessions that went down with VS Code, ready to reopen. @param {any[]} closed */
+  function closedSection(closed) {
+    const { section, folded } = sectionOf('closed', 'Closed with VS Code', closed.length);
+    if (folded) return section;
+    const now = Date.now();
+    const bar = el('div', 'closed-bar');
+    bar.append(
+      named(button(closed.length === 1 ? 'Resume' : `Resume all ${closed.length}`, 'btn primary', () => send({ type: 'resumeAll' }), 'Reopen each session in a terminal tab of its own, in its own folder'), 'closed:all'),
+      named(button('Dismiss all', 'btn', () => send({ type: 'dismissAllClosed' }), 'Take them off this list. Their history is kept: claude --resume still reopens them.'), 'closed:dismiss'),
+    );
+    const list = el('div', 'closed-list');
+    list.setAttribute('role', 'list');
+    for (const c of closed) list.append(closedRow(c, now));
+    section.append(bar, list);
+    return section;
+  }
+
+  /** @param {any} c @param {number} now */
+  function closedRow(c, now) {
+    const row = el('div', 'closed-row');
+    row.setAttribute('role', 'listitem');
+    const body = el('div', 'closed-body');
+    body.append(el('div', 'closed-title', c.title));
+    const meta = el('div', 'meta');
+    const folder = el('span', 'folder', c.cwd);
+    folder.prepend(svgOf(FOLDER, 'fold'));
+    const a = el('span', 'age', age(now - c.activeAt));
+    a.dataset.at = String(c.activeAt);
+    meta.append(el('span', 'state', c.state), folder, a);
+    body.append(meta);
+    const del = named(button('', 'x', () => send({ type: 'dismissClosed', id: c.id }), 'Take it off this list'), `closed:${c.id}:x`);
+    del.setAttribute('aria-label', `Dismiss: ${c.title}`);
+    del.append(svgOf(['M4.5 4.5l7 7M11.5 4.5l-7 7'], 'tick'));
+    row.append(body, named(button('Resume', 'btn', () => send({ type: 'resume', id: c.id }), 'Reopen this session in a terminal tab'), `closed:${c.id}:resume`), del);
+    return row;
   }
 
   /** The user's to-do list: open items, the add field, then the done ones (folded). @param {any[]} todos @param {any[]} open */
