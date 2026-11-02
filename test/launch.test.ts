@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { inTabScript, isModelId, launchCommand, launchSummary, nextTab, nextTabLine, readDefaults } from '../src/core/launch';
+import { inTabScript, isModelId, launchCommand, launchSummary, nextTab, nextTabLine, readDefaults, tabPid } from '../src/core/launch';
 
 test('launchCommand passes the model and effort, quoted, before the first message', () => {
   assert.equal(
@@ -70,4 +70,18 @@ test('nextTabLine says what happens to the old session', () => {
 test('inTabScript deletes itself before it starts the session', () => {
   const command = launchCommand({ claude: 'claude', name: 'Next', task: "line one\nit's line two" });
   assert.equal(inTabScript(command), `rm -f "$0"\n'claude' -n 'Next' 'line one\nit'\\''s line two'\n`);
+});
+
+test('tabPid follows a tab that gets a new shell', async () => {
+  const tab = { processId: Promise.resolve<number | undefined>(100) };
+  assert.equal(await tabPid(tab), 100);
+  tab.processId = Promise.resolve(200);
+  assert.equal(await tabPid(tab), 200, 'the old shell number must not stick');
+});
+
+test('tabPid gives up on a tab still starting, and finds it on a later try', async () => {
+  const tab = { processId: new Promise<number | undefined>(() => {}) };
+  assert.equal(await tabPid(tab, 5), undefined);
+  tab.processId = Promise.resolve(300);
+  assert.equal(await tabPid(tab, 5), 300);
 });

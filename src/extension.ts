@@ -8,7 +8,7 @@ import { BoardView, type FromBoard, type TodoView } from './board';
 import { alertPlan, alertText, givesAllAlerts, linkedKey, OPEN_PATH, openQuery, readLink, soundFile, TEST_PATH } from './core/alert';
 import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks';
 import { toCard, type Card, type Where } from './core/card';
-import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, type Defaults } from './core/launch';
+import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, tabPid, type Defaults } from './core/launch';
 import { modelName } from './core/cost';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
@@ -216,7 +216,6 @@ class Board implements vscode.Disposable {
   private readonly tracker = new Tracker();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly watchers: FSWatcher[] = [];
-  private readonly shellPids = new WeakMap<vscode.Terminal, Promise<number | undefined>>();
   /** Tabs this window opened with `claude attach`, by key. They close when the attach ends. */
   private readonly attachTabs = new Map<string, vscode.Terminal>();
   private claude?: Promise<string | undefined>;
@@ -694,18 +693,7 @@ class Board implements vscode.Disposable {
   }
 
   private shellPid(t: vscode.Terminal): Promise<number | undefined> {
-    let p = this.shellPids.get(t);
-    if (!p) {
-      p = Promise.race([
-        Promise.resolve(t.processId),
-        new Promise<undefined>((r) => setTimeout(() => r(undefined), 1000)),
-      ]).then((pid) => {
-        if (pid === undefined) this.shellPids.delete(t);
-        return pid;
-      });
-      this.shellPids.set(t, p);
-    }
-    return p;
+    return tabPid(t);
   }
 
   /** The session whose tab the user is looking at: the active terminal of a focused window. */

@@ -2,6 +2,7 @@
 
 ## 0.9.0
 
+- **Start next session takes over the old tab again after a tab gets a new shell.** VS Code can replace a tab's shell while it stays the same tab, for example around a Reload Window. Switchboard kept the old process number, so a session started in that tab looked as if it ran outside VS Code: Start next session left it open and used a new tab, a click on its card couldn't find its tab, and it wasn't kept for resuming. Switchboard now asks VS Code every time.
 - **A session Switchboard started no longer starts again by itself after a restart.** VS Code re-runs a tab's start-up command when it brings the tab back, so a tab from New session or Start next session ran `claude` again after a quit, first message included. Such a tab now comes back as a plain shell.
 - **Resume every session VS Code closed.** Quitting VS Code ends every Claude Code session in its terminal tabs. After a quit, a crash or a restart of the Mac, the board has a **Closed with VS Code** section at the top: **Resume all** brings every session back in one click, each with its own folder, model and effort. Each row also has its own **Resume** and a dismiss button.
   - Each session goes back in its old tab, with its scrollback above it, when VS Code has brought that tab back as an empty shell. A tab you have typed in, one running something, or one from another workspace is left alone: that session opens in a new tab.

@@ -162,3 +162,25 @@ export function nextTabLine(t: NextTab): string {
 export function inTabScript(command: string): string {
   return `rm -f "$0"\n${command}\n`;
 }
+
+/**
+ * The process behind a terminal tab, as VS Code says now. Never keep the
+ * answer: a tab can get a new shell while it stays the same tab, and a session
+ * started there would then look as if it ran outside VS Code. Resolves
+ * undefined if VS Code doesn't say within `waitMs`, as with a tab still starting.
+ */
+export function tabPid(tab: { readonly processId: PromiseLike<number | undefined> }, waitMs = 1000): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), waitMs);
+    tab.processId.then(
+      (pid) => {
+        clearTimeout(timer);
+        resolve(pid);
+      },
+      (e: unknown) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
