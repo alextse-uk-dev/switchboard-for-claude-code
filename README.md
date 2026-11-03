@@ -81,7 +81,7 @@ Nothing leaves your machine, except a phone push once you set one up: then each 
 Until it is on the Marketplace, install it from a `.vsix` file. Download the newest one from [Releases](https://github.com/alextse-uk-dev/switchboard-for-claude-code/releases/latest), then:
 
 ```sh
-code --install-extension switchboard-for-claude-code-0.8.0.vsix
+code --install-extension switchboard-for-claude-code-0.9.0.vsix
 ```
 
 Or build it yourself:
