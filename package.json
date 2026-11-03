@@ -2,7 +2,7 @@
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
   "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a Mac alert, or a push on your phone, when one needs you while you are away.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -95,6 +95,11 @@
         "category": "Switchboard"
       },
       {
+        "command": "switchboard.startNextQuick",
+        "title": "Start the Next Session (Quick)",
+        "category": "Switchboard"
+      },
+      {
         "command": "switchboard.resumeAll",
         "title": "Resume All Closed Sessions",
         "category": "Switchboard",
@@ -131,6 +136,18 @@
         "command": "switchboard.macAlert.test",
         "title": "Send a Test Mac Alert",
         "category": "Switchboard"
+      },
+      {
+        "command": "switchboard.muteAlerts",
+        "title": "Mute Alerts for 1 Hour",
+        "category": "Switchboard",
+        "icon": "$(bell-slash)"
+      },
+      {
+        "command": "switchboard.unmuteAlerts",
+        "title": "Unmute Alerts",
+        "category": "Switchboard",
+        "icon": "$(bell)"
       }
     ],
     "menus": {
@@ -154,6 +171,16 @@
           "command": "switchboard.refresh",
           "when": "view == switchboard.sessions",
           "group": "navigation@3"
+        },
+        {
+          "command": "switchboard.muteAlerts",
+          "when": "view == switchboard.sessions && !switchboard.muted",
+          "group": "navigation@4"
+        },
+        {
+          "command": "switchboard.unmuteAlerts",
+          "when": "view == switchboard.sessions && switchboard.muted",
+          "group": "navigation@4"
         }
       ],
       "commandPalette": [
@@ -168,6 +195,14 @@
         {
           "command": "switchboard.startNext",
           "when": "false"
+        },
+        {
+          "command": "switchboard.startNextQuick",
+          "when": "false"
+        },
+        {
+          "command": "switchboard.unmuteAlerts",
+          "when": "switchboard.muted"
         }
       ]
     },
@@ -308,6 +343,12 @@
           "default": true,
           "description": "Add to your to-do list what Claude's replies ask of you (lines such as \"Needs you: …\" or \"**You:** …\", and the list under a heading such as \"Needs you\"), and clear each ask once the session's next reply no longer makes it."
         },
+        "switchboard.jobCards.dir": {
+          "type": "string",
+          "default": "~/.claude/job-cards",
+          "description": "The folder Switchboard reads job cards from: <session id>.json files any tool may write to say what a Claude Code session is working on. Switchboard only reads them. An absolute path, or one starting with ~.",
+          "scope": "machine"
+        },
         "switchboard.newSession.chooseModel": {
           "type": "boolean",
           "default": true,
@@ -317,6 +358,11 @@
           "type": "boolean",
           "default": true,
           "description": "Start next session ends the old session and starts the new one in its terminal tab, when that tab is in this window and the old session is not working. The old session's history is kept (claude --resume reopens it). Off: the new session opens in a tab of its own and the old one stays open."
+        },
+        "switchboard.startNext.quick": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start next session skips the model and effort questions and the summary: it uses the model and effort you last chose (else the old session's own), still asks for any slot the kickoff prompt leaves for your answer, and says in one toast which model and effort it used. The card's \"Start next (quick)\" button does this whatever this setting says."
         },
         "switchboard.closedSessions.notify": {
           "type": "boolean",

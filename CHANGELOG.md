@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+
+- **Job cards.** Any tool can say what a Claude Code session is working on by writing `~/.claude/job-cards/<sessionId>.json` (see the README for the fields). Switchboard only reads them.
+  - Under the session's title: one muted line, `program · step 2 of 7 · next: …`, cut at the card's width, with the whole card in its tooltip, and one line per helper agent (`↳ reviewer: review the migration diff (running)`, at most 3, then `+N more`).
+  - `blocked` and `needs you` chips. A card not updated for 24 hours shows dimmed, marked `stale`.
+  - What the card says it needs of you joins the to-do list, once even if the reply asks it too, and clears when the card no longer lists it. An idle session whose card needs you shows under **Needs you**.
+  - Switchboard watches the folder (`switchboard.jobCards.dir`) and redraws when a card changes. A missing folder or file, bad JSON or unknown fields are ignored.
+- **Start next (quick).** A second button on a hand-over card starts the next session with the model and effort you last chose, with no summary to confirm. Slots in the kickoff prompt are still asked, and a toast names the model and effort it used. `switchboard.startNext.quick` makes **Start next session** do the same.
+- **Quieter alerts.**
+  - A pop-up or Mac alert with the same words for the same session shows once in 10 minutes.
+  - **Switchboard: Mute Alerts for 1 Hour**, also a bell button in the board's title bar. While muted nothing pops up and no Mac alert shows; the board, the counter and phone pushes carry on. A toast says when the mute ends, and it lasts through a Reload Window. **Switchboard: Unmute Alerts** ends it early.
+
 ## 0.9.0
 
 - **Start next session takes over the old tab again after a tab gets a new shell.** VS Code can replace a tab's shell while it stays the same tab, for example around a Reload Window. Switchboard kept the old process number, so a session started in that tab looked as if it ran outside VS Code: Start next session left it open and used a new tab, a click on its card couldn't find its tab, and it wasn't kept for resuming. Switchboard now asks VS Code every time.
