@@ -210,6 +210,30 @@ button {
 .tool:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
 .tick { width: 14px; height: 14px; fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
+/* A job card's line under the title, and its helpers; one line each, cut at the card's width. */
+.job {
+  margin: 2px 0 0 22px;
+  font-size: 11.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.job-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.job-text, .job-helper {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.job-helper { padding-left: 10px; }
+.job.stale { opacity: 0.55; }
+.job-stale {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  border: 1px solid var(--line);
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;

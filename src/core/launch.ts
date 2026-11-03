@@ -184,3 +184,25 @@ export function tabPid(tab: { readonly processId: PromiseLike<number | undefined
     );
   });
 }
+
+/**
+ * The model and effort a quick Start next uses: the ones last chosen in the
+ * picker ('' there meaning Default, so Claude Code's settings decide). Never
+ * chosen yet, it carries on with the old session's own, as the picker would
+ * open on them. Anything malformed is dropped.
+ */
+export function quickChoice(last: { model?: string; effort?: string }, same: { model?: string; effort?: string }): { model?: string; effort?: string } {
+  const pick = (stored: string | undefined, own: string | undefined, ok: (s: string) => boolean) => {
+    const v = stored !== undefined ? stored : own;
+    return v && ok(v) ? v : undefined;
+  };
+  return { model: pick(last.model, same.model, isModelId), effort: pick(last.effort, same.effort, isEffort) };
+}
+
+/** The toast after a quick Start next: which model and effort it used, defaults spelt out. */
+export function quickToast(folder: string, c: { model?: string; effort?: string }, d: Defaults, inPlace: boolean): string {
+  const model = c.model ?? (d.model ? `the default model (${d.model})` : "Claude Code's default model");
+  const effort = c.effort ? `${c.effort} effort` : d.effort ? `the default effort (${d.effort})` : "Claude Code's default effort";
+  const tab = inPlace ? ' in the old tab' : '';
+  return `Started the next session in ${folder}${tab} with ${model} and ${effort}.`;
+}

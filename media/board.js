@@ -386,7 +386,9 @@
     const meta = el('div', 'todo-meta');
     if (t.from === 'claude') {
       const by = el('span', 'by', 'asked by');
-      by.title = t.key ? 'Clears itself when this session\'s next reply no longer asks it' : 'The session has ended, so this stays until you tick it';
+      by.title = !t.key ? 'The session has ended, so this stays until you tick it'
+        : t.via === 'card' ? 'From the session\'s job card. Clears itself when the card no longer lists it'
+        : 'Clears itself when this session\'s next reply no longer asks it';
       meta.append(by);
     }
     if (t.session) {
@@ -452,6 +454,20 @@
       top.append(a);
     }
     n.append(top);
+
+    // What a tool's job card says the session is working on: one line, then its helpers.
+    if (c.job) {
+      const job = el('div', `job${c.job.stale ? ' stale' : ''}`);
+      job.title = c.job.tip.join('\n');
+      if (c.job.line || c.job.stale) {
+        const line = el('div', 'job-line');
+        if (c.job.line) line.append(el('span', 'job-text', c.job.line));
+        if (c.job.stale) line.append(el('span', 'job-stale', 'stale'));
+        job.append(line);
+      }
+      for (const h of c.job.helpers) job.append(el('div', 'job-helper', h));
+      if (job.childElementCount) n.append(job);
+    }
 
     const meta = el('div', 'meta');
     const folder = el('span', 'folder', c.cwd);
@@ -530,11 +546,13 @@
       }
     }
 
-    if (c.group === 'handoff') {
+    if (c.group === 'handoff' || c.handoff) {
       const actions = el('div', 'actions');
       actions.append(
         named(button('Start next session', 'btn primary', () => send({ type: 'next', key: c.key }),
           c.prompt ? 'Open a new session in this folder, with the kickoff prompt as its first message' : 'Open a new session in this folder'), `card:${c.key}:next`),
+        named(button('Start next (quick)', 'btn', () => send({ type: 'nextQuick', key: c.key }),
+          'Start it with the model and effort you last chose, with no summary to confirm. Any slot in the kickoff prompt is still asked.'), `card:${c.key}:nextQuick`),
       );
       if (c.prompt) actions.append(named(button('Copy prompt', 'btn', () => send({ type: 'copy', key: c.key }), 'Copy the kickoff prompt'), `card:${c.key}:copy`));
       n.append(actions);

@@ -23,6 +23,8 @@ export interface Todo {
    * comes back if a later reply asks it again.
    */
   clearedAt?: number;
+  /** Picked up from the session's job card, not its reply. Each source clears only its own asks. */
+  via?: 'card';
 }
 
 /** Done, deleted and cleared items are dropped after this long. */
@@ -127,16 +129,52 @@ const live = (t: Todo) => !t.doneAt && !t.deletedAt && !t.clearedAt;
  * Brings each session's asks in line with its newest reply. Asks it makes
  * are added (or come back, if they were cleared). Open asks from its earlier
  * replies that it no longer makes are cleared: the user has answered and the
- * session moved on. Items the user ticked, deleted or wrote are left alone.
- * Returns undefined if nothing changes.
+ * session moved on. Items the user ticked, deleted or wrote are left alone,
+ * and so are asks from job cards. Returns undefined if nothing changes.
  */
 export function syncAsks(list: readonly Todo[], sessions: readonly SessionAsks[], now: number): Todo[] | undefined {
+  return syncFrom(list, sessions, now, undefined);
+}
+
+/**
+ * The same for what sessions' job cards say they need of the user. An item
+ * the session's reply already asks (the same words, give or take case,
+ * spacing and an end stop) is left to the reply's ask, so it shows once; if
+ * that ask clears while the card still says it, the card's item comes back.
+ * Returns undefined if nothing changes.
+ */
+export function syncCardAsks(list: readonly Todo[], sessions: readonly SessionAsks[], now: number): Todo[] | undefined {
+  const deduped = sessions.map((s) => {
+    const asked = new Set(list.filter((t) => t.from === 'claude' && t.sessionId === s.sessionId && !t.via && live(t)).map((t) => normalAsk(t.text)));
+    return { ...s, texts: s.texts.filter((t) => !asked.has(normalAsk(t))) };
+  });
+  return syncFrom(list, deduped, now, 'card');
+}
+
+/** Text as compared for being the same ask: lower case, one space, no markup or end stop. */
+export function normalAsk(text: string): string {
+  return plain(text)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.!?;:,…]+$/, '')
+    .trim();
+}
+
+/** A job card's ask gets an id of its own, so it never collides with a reply's. */
+export function cardAskId(sessionId: string, text: string): string {
+  return `j-${createHash('sha1').update(`${sessionId}\n${normalAsk(text)}`).digest('hex').slice(0, 16)}`;
+}
+
+function syncFrom(list: readonly Todo[], sessions: readonly SessionAsks[], now: number, via: 'card' | undefined): Todo[] | undefined {
+  const idOf = via === 'card' ? cardAskId : askId;
   let out = [...list];
   let changed = false;
   for (const s of sessions) {
-    const wanted = new Map(s.texts.map((text) => [askId(s.sessionId, text), text]));
+    // The first wording of an ask is the one kept.
+    const wanted = new Map<string, string>();
+    for (const text of s.texts) if (!wanted.has(idOf(s.sessionId, text))) wanted.set(idOf(s.sessionId, text), text);
     out = out.map((t) => {
-      if (t.from !== 'claude' || t.sessionId !== s.sessionId) return t;
+      if (t.from !== 'claude' || t.sessionId !== s.sessionId || t.via !== via) return t;
       if (live(t) && !wanted.has(t.id)) {
         changed = true;
         return { ...t, clearedAt: now };
@@ -152,7 +190,8 @@ export function syncAsks(list: readonly Todo[], sessions: readonly SessionAsks[]
     for (const [id, text] of wanted) {
       if (have.has(id)) continue;
       changed = true;
-      out.push({ id, text, from: 'claude', sessionId: s.sessionId, session: s.session, createdAt: now });
+      have.add(id);
+      out.push({ id, text, from: 'claude', sessionId: s.sessionId, session: s.session, createdAt: now, ...(via ? { via } : {}) });
     }
   }
   return changed ? out : undefined;
@@ -236,6 +275,7 @@ export function parseTodos(json: string): Todo[] {
     if (doneAt !== undefined) t.doneAt = doneAt;
     if (deletedAt !== undefined) t.deletedAt = deletedAt;
     if (clearedAt !== undefined) t.clearedAt = clearedAt;
+    if (o.via === 'card') t.via = 'card';
     return [t];
   });
 }

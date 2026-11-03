@@ -12,6 +12,8 @@ export interface TodoView {
   key?: string;
   createdAt: number;
   doneAt?: number;
+  /** Picked up from the session's job card. */
+  via?: 'card';
 }
 
 /**
@@ -19,14 +21,14 @@ export interface TodoView {
  * to-do actions name an item by its id.
  */
 export type FromBoard =
-  | { type: 'open' | 'seen' | 'next' | 'copy' | 'todo'; key: string }
+  | { type: 'open' | 'seen' | 'next' | 'nextQuick' | 'copy' | 'todo'; key: string }
   | { type: 'new' | 'todoClear' | 'resumeAll' | 'dismissAllClosed' }
   | { type: 'resume' | 'dismissClosed'; id: string }
   | { type: 'todoAdd'; text: string }
   | { type: 'todoDone'; id: string; done: boolean }
   | { type: 'todoDelete'; id: string };
 
-const CARD_ACTIONS: ReadonlySet<string> = new Set(['open', 'seen', 'next', 'copy', 'todo']);
+const CARD_ACTIONS: ReadonlySet<string> = new Set(['open', 'seen', 'next', 'nextQuick', 'copy', 'todo']);
 const TODO_ID = /^[a-z]-[A-Za-z0-9-]{1,40}$/;
 
 /** Accepts only the messages the page is meant to send. */

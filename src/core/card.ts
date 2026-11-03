@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { formatUsd, modelName, type Tally } from './cost';
+import { helperLines, isStale, jobChips, jobLine, jobTip, type JobCard } from './jobcard';
 import { formatTokens, waitingLabel } from './model';
 import { compactedSinceReply, contextTokens, gist, type Digest } from './transcript';
 import { keyOf, type Group, type Outcome, type Session } from './types';
@@ -33,6 +34,10 @@ export interface Card {
   compacted: boolean;
   /** A kickoff prompt was found, so it can be copied or started. */
   prompt: boolean;
+  /** The last turn handed over, so the card offers Start next, even when it shows under Needs you. */
+  handoff: boolean;
+  /** What the session's job card says, if a tool wrote one. */
+  job?: JobView;
   /** What the session's tokens would cost at API prices, e.g. "$12.40". */
   cost?: string;
   /** The cost's breakdown, for its tooltip. */
@@ -44,6 +49,18 @@ export interface Card {
   /** Claude's whole last reply (markdown), when it says more than the detail line. */
   reply?: string;
   /** Lines for the hover tooltip. */
+  tip: string[];
+}
+
+/** A job card as the board draws it. */
+export interface JobView {
+  /** "billing-rewrite · step 2 of 7 · next: …" (may be empty when the card has only helpers or asks). */
+  line: string;
+  /** Not updated for a day: drawn dimmed, marked stale. */
+  stale: boolean;
+  /** "↳ reviewer: review the migration diff (running)", at most three, then "+N more". */
+  helpers: string[];
+  /** The whole card, for the tooltip. */
   tip: string[];
 }
 
@@ -64,13 +81,18 @@ export interface CardInput {
   helpers?: number;
   /** Show the cost (default true). */
   showCost?: boolean;
+  /** The session's job card, if a tool wrote one. */
+  job?: JobCard;
+  /** The time now, for telling a stale job card (default: Date.now()). */
+  now?: number;
 }
 
 function stateWords(c: CardInput, tokens: number | undefined): string {
   const o = c.outcome;
   switch (c.group) {
     case 'needs':
-      return waitingLabel(c.s.waitingFor);
+      // An idle session here is waiting on what its job card lists.
+      return c.s.status === 'waiting' ? waitingLabel(c.s.waitingFor) : 'needs you';
     case 'reply':
       return 'asks you';
     case 'handoff':
@@ -91,7 +113,7 @@ function stateWords(c: CardInput, tokens: number | undefined): string {
 
 function detailOf(c: CardInput): { detail?: string; quote: boolean } {
   const o = c.outcome;
-  if (c.group === 'reply' && o?.kind === 'question') return { detail: o.ask, quote: true };
+  if ((c.group === 'reply' || c.group === 'needs') && o?.kind === 'question') return { detail: o.ask, quote: true };
   if (c.group === 'stopped' && o?.kind === 'stopped' && o.text) return { detail: o.text, quote: false };
   // A hand-over card shows what it went by: the prompt it would send, else the words that matched.
   if (c.group === 'handoff' && o?.kind === 'handoff' && (o.prompt || o.reason === 'kickoff')) return { detail: o.prompt ?? o.line, quote: true };
@@ -105,6 +127,7 @@ function chipsOf(c: CardInput): string[] {
   if (c.where === 'nested') out.push('inside another session');
   else if (c.where === 'elsewhere') out.push('other window');
   else if (c.where === 'outside' && c.s.kind !== 'background') out.push('outside VS Code');
+  if (c.job) out.push(...jobChips(c.job));
   return out;
 }
 
@@ -138,6 +161,8 @@ export function toCard(c: CardInput): Card {
     freshTokens: c.freshTokens,
     compacted,
     prompt: c.outcome?.kind === 'handoff' && !!c.outcome.prompt,
+    handoff: c.outcome?.kind === 'handoff',
+    job: c.job ? jobView(c.job, c.now ?? Date.now()) : undefined,
     cost: t ? `${formatUsd(t.usd)}${Object.keys(t.unpriced).length ? '+' : ''}` : undefined,
     costTip: t ? costTip(t, c.helpers ?? 0) : [],
     model: c.digest?.model ? modelName(c.digest.model.v) : undefined,
@@ -145,6 +170,13 @@ export function toCard(c: CardInput): Card {
     reply: reply && saysMore(reply, detail) ? reply : undefined,
     tip,
   };
+}
+
+function jobView(j: JobCard, now: number): JobView | undefined {
+  const line = jobLine(j);
+  const helpers = helperLines(j);
+  if (!line && !helpers.length && !j.needsYou.length && !j.blockedOn) return undefined;
+  return { line, stale: isStale(j, now), helpers, tip: jobTip(j, now) };
 }
 
 /** Lines a folded detail keeps showing; the board clamps to the same number. */

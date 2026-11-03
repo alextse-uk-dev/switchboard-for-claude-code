@@ -8,11 +8,13 @@ import { BoardView, type FromBoard, type TodoView } from './board';
 import { alertPlan, alertText, givesAllAlerts, linkedKey, OPEN_PATH, openQuery, readLink, soundFile, TEST_PATH } from './core/alert';
 import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks';
 import { toCard, type Card, type Where } from './core/card';
-import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, tabPid, type Defaults } from './core/launch';
+import { groupWithJob, type JobCard } from './core/jobcard';
+import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, quickChoice, quickToast, readDefaults, shq, tabPid, type Defaults } from './core/launch';
 import { modelName } from './core/cost';
 import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
 import { awayMs, maskedTopic, newTopic, parseTopicUrl, pendingVerdict, pushMessage, pushVerdict, tokenProblem, type Pending, type PushTarget } from './core/push';
+import { clockTime, isMuted, muteEnded, muteUntil, Repeats } from './core/quiet';
 import { canReuseTab, closedText, FORGET_AFTER_MS, forgets, offerClaim, reopenOrder, resumeCommand, resumeScript, shouldWrite, toClosedView, verdictOf, type Recoverable } from './core/recover';
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
 import { outcomeOf, type Digest } from './core/transcript';
@@ -21,6 +23,7 @@ import { PushStore, sendPush, systemIdleMs } from './push';
 import { RecoveryStore } from './recovery';
 import { alive, SharedState, type Peers } from './shared';
 import { claudeConfigDir, findClaude, message, processStamp, SessionSource, type SessionCost } from './source';
+import { JobCardStore, jobCardsDir } from './jobcards';
 import { TodoStore } from './todos';
 
 const VIEW_ID = 'switchboard.sessions';
@@ -40,6 +43,8 @@ const TOUCHED_KEY = 'switchboard.touchedShells';
 /** The model and effort last chosen for a new session ('' for the default). */
 const LAST_MODEL_KEY = 'switchboard.lastModel';
 const LAST_EFFORT_KEY = 'switchboard.lastEffort';
+/** When the alerts' mute ends, in ms since the epoch; kept across reloads, cleared once its end is told. */
+const MUTED_KEY = 'switchboard.mutedUntil';
 
 /** A model and an effort for a new session; either left out means Claude Code's default. */
 interface ModelChoice {
@@ -144,6 +149,7 @@ interface Row {
   changedAt?: number;
   unread: boolean;
   where: Where;
+  job?: JobCard;
 }
 
 const keyArg = (arg: unknown): string | undefined => (typeof arg === 'string' ? arg : undefined);
@@ -175,6 +181,9 @@ const claimAt = (s: Session, now: number) => s.statusUpdatedAt ?? `m${Math.floor
 
 /** The context size from which a session is told to hand over (0: never). */
 const freshTokens = () => Math.max(0, config().get<number>('newSessionTokens', 150_000));
+
+/** The folder job cards are read from. */
+const jobDir = () => jobCardsDir(config().get<string>('jobCards.dir', '~/.claude/job-cards'));
 
 /** The board's default width in pixels (0: leave the side bar as it is). */
 const boardWidth = () => Math.max(0, Math.round(config().get<number>('board.width', 440)));
@@ -219,6 +228,16 @@ class Board implements vscode.Disposable {
   /** Tabs this window opened with `claude attach`, by key. They close when the attach ends. */
   private readonly attachTabs = new Map<string, vscode.Terminal>();
   private claude?: Promise<string | undefined>;
+  private readonly jobCards = new JobCardStore(jobDir());
+  private jobWatcher?: FSWatcher;
+  /** Each live session's job card, by session id. */
+  private jobs = new Map<string, JobCard>();
+  /** What each session's job card last put on the to-do list, so it is synced only on a change. */
+  private jobAsked = new Map<string, string>();
+  /** Pop-up and Mac alert texts given lately, so the same words aren't repeated within 10 minutes. */
+  private readonly popRepeats = new Repeats();
+  private readonly alertRepeats = new Repeats();
+  private muteTimer?: NodeJS.Timeout;
 
   private sessions: Session[] = [];
   private digests = new Map<string, Digest>();
@@ -274,6 +293,9 @@ class Board implements vscode.Disposable {
       vscode.commands.registerCommand('switchboard.markSeen', (arg) => this.markSeen(keyArg(arg))),
       vscode.commands.registerCommand('switchboard.markAllSeen', () => this.markAllSeen()),
       vscode.commands.registerCommand('switchboard.startNext', (arg) => this.startNext(keyArg(arg))),
+      vscode.commands.registerCommand('switchboard.startNextQuick', (arg) => this.startNext(keyArg(arg), true)),
+      vscode.commands.registerCommand('switchboard.muteAlerts', () => this.mute()),
+      vscode.commands.registerCommand('switchboard.unmuteAlerts', () => this.unmute()),
       vscode.commands.registerCommand('switchboard.addTodo', () => this.addTodo()),
       vscode.commands.registerCommand('switchboard.resumeAll', () => this.resumeClosed()),
       vscode.commands.registerCommand('switchboard.fitWidth', () => this.fitWidthNow()),
@@ -303,6 +325,11 @@ class Board implements vscode.Disposable {
       this.board.onDidShow(() => this.schedule()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('switchboard.claudePath')) this.claude = undefined;
+        if (e.affectsConfiguration('switchboard.jobCards.dir')) {
+          this.jobCards.setDir(jobDir());
+          this.watchJobCards();
+          this.schedule();
+        }
         if (e.affectsConfiguration('switchboard.macAlert')) void this.safe(this.shared.noteMacAlerts(allMacAlerts()), undefined);
         if (e.affectsConfiguration('switchboard')) this.render();
         if (e.affectsConfiguration('switchboard.newSessionTokens') || e.affectsConfiguration('switchboard.showCost')) this.schedule();
@@ -318,10 +345,30 @@ class Board implements vscode.Disposable {
     });
     // Another window took or wrote a record.
     this.watch(this.recovery.dir, () => void this.safe(this.recovery.load(), undefined).then(() => this.judgeRecords()));
+    // A tool wrote or changed a job card. Without the folder yet, the minute tick looks again.
+    this.watchJobCards();
     this.tick = setInterval(() => {
+      if (!this.jobWatcher) this.watchJobCards();
       if (this.board.visible || vscode.window.state.focused) this.schedule();
     }, TICK_MS);
+    this.armMute();
     await this.refresh();
+  }
+
+  /** Watches the job-cards folder, again from scratch (the setting changed, or it didn't exist yet). */
+  private watchJobCards(): void {
+    this.jobWatcher?.close();
+    this.jobWatcher = undefined;
+    try {
+      const w = watch(this.jobCards.dir, () => this.schedule());
+      w.on('error', () => {
+        w.close();
+        if (this.jobWatcher === w) this.jobWatcher = undefined;
+      });
+      this.jobWatcher = w;
+    } catch {
+      // No such folder yet: no tool has written a job card. The minute tick tries again.
+    }
   }
 
   private watch(dir: string, onChange: (file: string | null) => void): void {
@@ -395,7 +442,10 @@ class Board implements vscode.Disposable {
     const { events, fresh } = this.tracker.update(sessions, now);
     this.sessions = sessions;
     this.listed = true;
-    this.source.forget(new Set(sessions.map((s) => s.sessionId)));
+    const liveIds = new Set(sessions.map((s) => s.sessionId));
+    this.source.forget(liveIds);
+    this.popRepeats.forget(liveIds);
+    this.alertRepeats.forget(liveIds);
 
     this.tabs = await this.matchTabs(sessions);
     await this.safe(this.shared.publishOwned([...this.tabs.keys()]), undefined);
@@ -415,7 +465,12 @@ class Board implements vscode.Disposable {
 
     const digests = await Promise.all(sessions.map((s) => this.source.digestOf(s, now)));
     this.digests = new Map(sessions.flatMap((s, i): Array<[string, Digest]> => (digests[i] ? [[s.sessionId, digests[i]]] : [])));
+    this.jobs = await this.jobCards.read(sessions.map((s) => s.sessionId)).catch((e: unknown) => {
+      this.log.warn(`Could not read the job cards: ${message(e)}`);
+      return this.jobs;
+    });
     await this.pickAsks(sessions);
+    await this.pickCardAsks(sessions);
     await this.safe(this.noteForRecovery(sessions), undefined);
     this.render();
     void this.offerClosed();
@@ -745,6 +800,27 @@ class Board implements vscode.Disposable {
     await this.safe(this.todos.syncAsks(changed, Date.now()), false);
   }
 
+  /**
+   * Keeps the to-do list in step with what live sessions' job cards say they
+   * need of the user. An item the session's reply already asks shows once.
+   */
+  private async pickCardAsks(sessions: readonly Session[]): Promise<void> {
+    const live = new Set(sessions.map((s) => s.sessionId));
+    for (const id of this.jobAsked.keys()) if (!live.has(id)) this.jobAsked.delete(id);
+    const changed: SessionAsks[] = [];
+    for (const s of sessions) {
+      const texts = this.jobs.get(s.sessionId)?.needsYou ?? [];
+      // The reply's asks are part of what it is compared against, so a change there counts too.
+      const stamp = `${texts.join('\n')}\n@${this.asked.get(s.sessionId) ?? ''}`;
+      if (this.jobAsked.get(s.sessionId) === stamp) continue;
+      // A session that never had a card has nothing to sync, nor to clear.
+      if (!texts.length && !this.jobAsked.has(s.sessionId) && !this.todos.list.some((t) => t.via === 'card' && t.sessionId === s.sessionId)) continue;
+      this.jobAsked.set(s.sessionId, stamp);
+      changed.push({ sessionId: s.sessionId, session: displayTitle(s, this.digests.get(s.sessionId)), texts });
+    }
+    await this.safe(this.todos.syncCardAsks(changed, Date.now()), false);
+  }
+
   private render(): void {
     const fresh = freshTokens();
     const showCost = config().get<boolean>('showCost', true);
@@ -754,10 +830,12 @@ class Board implements vscode.Disposable {
       const changedAt = this.tracker.changedAt(key);
       const digest = this.digests.get(s.sessionId);
       const outcome = s.status === 'idle' && digest ? this.outcome(digest, fresh) : undefined;
+      const job = this.jobs.get(s.sessionId);
       return {
         s,
         title: displayTitle(s, digest),
-        group: groupOf(s, outcome),
+        group: groupWithJob(groupOf(s, outcome), s, job),
+        job,
         outcome,
         digest,
         changedAt,
@@ -775,7 +853,7 @@ class Board implements vscode.Disposable {
     );
     const cards = sorted.map((r) => {
       const cost = this.costs.get(r.s.sessionId);
-      return toCard({ ...r, freshTokens: fresh, home, tally: cost?.tally, helpers: cost?.helpers, showCost });
+      return toCard({ ...r, freshTokens: fresh, home, tally: cost?.tally, helpers: cost?.helpers, showCost, now: Date.now() });
     });
     this.cards = new Map(cards.map((c) => [c.key, c]));
     const todos = this.todoViews(rows);
@@ -804,6 +882,7 @@ class Board implements vscode.Disposable {
       key: t.sessionId ? keys.get(t.sessionId) : undefined,
       createdAt: t.createdAt,
       doneAt: t.doneAt,
+      via: t.via,
     }));
   }
 
@@ -824,6 +903,8 @@ class Board implements vscode.Disposable {
     }
     if (closed) tip.appendMarkdown(`**Closed with VS Code**: ${this.closed.map((r) => escapeMd(r.title)).join(', ')}  \n`);
     if (todos) tip.appendMarkdown(`**To do**: ${todos} open  \n`);
+    const until = this.mutedUntil();
+    if (isMuted(until, Date.now())) tip.appendMarkdown(`**Alerts**: muted until ${clockTime(until!)}  \n`);
     if (this.push.peek()) tip.appendMarkdown(`**Phone push**: on${config().get<string>('phonePush.when', 'away') === 'always' ? '' : `, when you're away ${config().get<number>('phonePush.awayMinutes', 3)} min`}  \n`);
     tip.appendMarkdown('\nClick to open Switchboard.');
     this.status.tooltip = tip;
@@ -851,8 +932,11 @@ class Board implements vscode.Disposable {
     // The user interrupted it themselves, so there is nothing to tell.
     if (e.type === 'finished' && row?.outcome?.kind === 'stopped' && row.outcome.why === 'interrupted') return;
     if (!this.pops(e, looking)) return;
-    if (!(await this.safe(this.shared.claim(`${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
+    // Muted: the board and the counter still change, but nothing pops.
+    if (isMuted(this.mutedUntil(), Date.now())) return;
     const text = popText(e, row?.title ?? e.session.name, e.type === 'finished' ? row?.outcome : undefined);
+    if (!this.popRepeats.fresh(e.session.sessionId, text, Date.now())) return;
+    if (!(await this.safe(this.shared.claim(`${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
     const next = e.type === 'finished' && row?.group === 'handoff' ? ['Start next session'] : [];
     const warn = e.type === 'needs' || row?.group === 'stopped';
     const pick = await (warn ? vscode.window.showWarningMessage(text, 'Open', ...next) : vscode.window.showInformationMessage(text, 'Open', ...next));
@@ -911,7 +995,7 @@ class Board implements vscode.Disposable {
    * decides and a claim makes sure only one alerts.
    */
   private async maybeAlert(e: SessionEvent, looking: Session | undefined): Promise<void> {
-    if (!macAlertsOn()) return;
+    if (!macAlertsOn() || isMuted(this.mutedUntil(), Date.now())) return;
     const cfg = config();
     const key = keyOf(e.session);
     const row = this.rows.get(key);
@@ -928,12 +1012,60 @@ class Board implements vscode.Disposable {
       soundOn: sound !== undefined,
     });
     if (!plan.banner && !plan.sound) return;
-    if (!(await this.safe(this.shared.claim(`alert-${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
     const t = alertText(e, row?.title ?? e.session.name, path.basename(e.session.cwd) || e.session.cwd, row?.outcome);
+    if (!this.alertRepeats.fresh(e.session.sessionId, `${t.title}\n${t.message}`, Date.now())) return;
+    if (!(await this.safe(this.shared.claim(`alert-${e.type}-${key}-${claimAt(e.session, Date.now())}`), true))) return;
     await Promise.all([
       plan.banner ? this.banner(t.title, t.message, OPEN_PATH, openQuery(key)).catch((err) => this.log.warn(`Mac alert banner not shown: ${message(err)}.`)) : undefined,
       plan.sound && sound ? playSound(sound).catch((err) => this.log.warn(`Mac alert sound not played: ${message(err)}.`)) : undefined,
     ]);
+  }
+
+  /** When the alerts' mute ends, if one was set (it may have ended already). */
+  private mutedUntil(): number | undefined {
+    const v = this.ctx.globalState.get<number>(MUTED_KEY);
+    return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  }
+
+  /** Mutes pop-ups and Mac alerts for an hour. The board, the counter and phone pushes carry on. */
+  private async mute(): Promise<void> {
+    const until = muteUntil(Date.now());
+    await this.ctx.globalState.update(MUTED_KEY, until);
+    this.armMute();
+    this.render();
+    void vscode.window.showInformationMessage(`Switchboard alerts are muted until ${clockTime(until)}. The board and the counter still update.`);
+  }
+
+  private async unmute(): Promise<void> {
+    await this.ctx.globalState.update(MUTED_KEY, undefined);
+    this.armMute();
+    this.render();
+    void vscode.window.showInformationMessage('Switchboard alerts are back on.');
+  }
+
+  /**
+   * Sets the title bar's button, and a timer for the toast that says the mute
+   * has ended. A mute that ended while VS Code was closed, or reloading, is
+   * told on the next start. Only one window tells it.
+   */
+  private armMute(): void {
+    clearTimeout(this.muteTimer);
+    this.muteTimer = undefined;
+    const until = this.mutedUntil();
+    const now = Date.now();
+    void vscode.commands.executeCommand('setContext', 'switchboard.muted', isMuted(until, now));
+    if (until === undefined) return;
+    if (muteEnded(until, now)) {
+      void (async () => {
+        await this.ctx.globalState.update(MUTED_KEY, undefined);
+        this.render();
+        if (await this.safe(this.shared.claim(`unmuted-${until}`), true)) {
+          void vscode.window.showInformationMessage('Switchboard alerts are back on: the hour of mute has ended.');
+        }
+      })();
+      return;
+    }
+    this.muteTimer = setTimeout(() => this.armMute(), until - now + 50);
   }
 
   private async testMacAlert(): Promise<void> {
@@ -1143,6 +1275,8 @@ class Board implements vscode.Disposable {
         return this.markSeen(m.key);
       case 'next':
         return this.startNext(m.key);
+      case 'nextQuick':
+        return this.startNext(m.key, true);
       case 'copy': {
         const o = this.rows.get(m.key)?.outcome;
         if (o?.kind === 'handoff' && o.prompt) {
@@ -1394,9 +1528,10 @@ class Board implements vscode.Disposable {
    * it there before anything runs. The new session takes over the old one's
    * terminal tab when it can (see `nextTab`), else opens a tab of its own.
    */
-  private async startNext(key: string | undefined): Promise<void> {
+  private async startNext(key: string | undefined, quickButton = false): Promise<void> {
     const row = key ? this.rows.get(key) : undefined;
     if (!key || !row) return;
+    if (quickButton || config().get<boolean>('startNext.quick', false)) return this.startNextQuick(key, row);
     const prompt = row.outcome?.kind === 'handoff' ? row.outcome.prompt : undefined;
     const folder = path.basename(row.s.cwd);
     // The next session carries on the same work, so it starts from the same model and effort.
@@ -1427,6 +1562,42 @@ class Board implements vscode.Disposable {
       void vscode.window.showInformationMessage("Switchboard couldn't start it in the old session's tab, so it opened in a tab of its own.");
     }
     await this.launch(l);
+  }
+
+  /**
+   * Start next session without the model and effort questions and without
+   * the summary: the last model and effort chosen (see `quickChoice`), and
+   * the kickoff prompt with any slots filled in, since those answers are the
+   * user's own. One toast names the model and effort it used.
+   */
+  private async startNextQuick(key: string, row: Row): Promise<void> {
+    const prompt = row.outcome?.kind === 'handoff' ? row.outcome.prompt : undefined;
+    const folder = path.basename(row.s.cwd);
+    const blanks = prompt ? findBlanks(prompt).length : 0;
+    const step = (n: number) => `Start the next session in ${folder} (${n}/${blanks})`;
+    const task = prompt && blanks ? await this.fillPrompt(prompt, (i) => `${step(1 + i)}: fill in the kickoff prompt`) : prompt ?? '';
+    if (task === undefined) return;
+    const choice = quickChoice(
+      { model: this.ctx.globalState.get<string>(LAST_MODEL_KEY), effort: this.ctx.globalState.get<string>(LAST_EFFORT_KEY) },
+      { model: row.digest?.model?.v, effort: row.digest?.effort?.v },
+    );
+    const l = { name: row.title, cwd: row.s.cwd, task, ...choice };
+    const tab = this.tabs.get(key);
+    const where = nextTab({
+      enabled: config().get<boolean>('startNext.sameTab', true),
+      kind: row.s.kind,
+      where: row.where,
+      busy: row.s.status === 'busy',
+      isTabProcess: !!tab && (await this.shellPid(tab)) === row.s.pid,
+    });
+    await this.markSeen(key);
+    let inPlace = false;
+    if (where.inPlace && tab) {
+      inPlace = await this.launchInTab(key, tab, l);
+      if (!inPlace) this.log.info("Quick start: couldn't use the old session's tab, so the next session opened in a tab of its own.");
+    }
+    if (!inPlace) await this.launch(l);
+    void vscode.window.showInformationMessage(quickToast(folder, choice, await this.defaultsFor(row.s.cwd), inPlace));
   }
 
   /**
@@ -1598,6 +1769,8 @@ class Board implements vscode.Disposable {
     clearTimeout(this.debounce);
     clearInterval(this.tick);
     clearInterval(this.pendingTick);
+    clearTimeout(this.muteTimer);
+    this.jobWatcher?.close();
     for (const t of this.ending.values()) clearTimeout(t);
     for (const w of this.watchers) w.close();
     for (const d of this.disposables) d.dispose();
