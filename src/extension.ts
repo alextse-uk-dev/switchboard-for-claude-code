@@ -17,11 +17,13 @@ import { canReuseTab, closedText, FORGET_AFTER_MS, forgets, offerClaim, reopenOr
 import { asksOf, MAX_TODO, shownTodos, type SessionAsks, type TodoOp } from './core/todo';
 import { outcomeOf, type Digest } from './core/transcript';
 import { GROUP_LABEL, GROUP_ORDER, keyOf, type Group, type Outcome, type Session } from './core/types';
+import { midTurn } from './core/update';
 import { PushStore, sendPush, systemIdleMs } from './push';
 import { RecoveryStore } from './recovery';
 import { alive, SharedState, type Peers } from './shared';
 import { claudeConfigDir, findClaude, message, processStamp, SessionSource, type SessionCost } from './source';
 import { TodoStore } from './todos';
+import { Updates } from './update';
 
 const VIEW_ID = 'switchboard.sessions';
 const NTFY = 'https://ntfy.sh/';
@@ -130,6 +132,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const board = new Board(ctx);
   ctx.subscriptions.push(board);
   await board.start();
+  const updates = new Updates(ctx, { midTurn: () => board.midTurnHere(), onDidChange: board.onDidList, refresh: () => board.refresh(), log: board.log });
+  ctx.subscriptions.push(updates);
+  await updates.start();
 }
 
 export function deactivate(): void {}
@@ -186,7 +191,10 @@ const boardWidth = () => Math.max(0, Math.round(config().get<number>('board.widt
  * looking at either tab counts for both.
  */
 class Board implements vscode.Disposable {
-  private readonly log = vscode.window.createOutputChannel('Switchboard', { log: true });
+  readonly log = vscode.window.createOutputChannel('Switchboard', { log: true });
+  private readonly listedEvent = new vscode.EventEmitter<void>();
+  /** Fires after each look at the session list. */
+  readonly onDidList = this.listedEvent.event;
   private readonly board: BoardView;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   private readonly source: SessionSource;
@@ -263,6 +271,7 @@ class Board implements vscode.Disposable {
     const w = vscode.window;
     this.disposables.push(
       this.log,
+      this.listedEvent,
       this.board,
       vscode.window.registerWebviewViewProvider(VIEW_ID, this.board),
       // A click on a Mac alert's banner comes back here, in the window that posted it.
@@ -418,6 +427,7 @@ class Board implements vscode.Disposable {
     await this.pickAsks(sessions);
     await this.safe(this.noteForRecovery(sessions), undefined);
     this.render();
+    this.listedEvent.fire();
     void this.offerClosed();
     for (const e of events) {
       void this.maybePop(e, looking);
@@ -706,6 +716,15 @@ class Board implements vscode.Disposable {
   private async noteLooking(): Promise<void> {
     const s = this.lookingAt();
     if (s && this.rows.get(keyOf(s))?.unread) await this.markSeen(keyOf(s));
+  }
+
+  /**
+   * A session in this window's terminal tabs is mid-turn: anything but idle.
+   * Until the first look, nothing is known, so it counts as mid-turn.
+   */
+  midTurnHere(): boolean {
+    if (!this.listed) return true;
+    return midTurn(this.sessions.filter((s) => this.tabs.has(keyOf(s))).map((s) => s.status));
   }
 
   private where(key: string): Where {

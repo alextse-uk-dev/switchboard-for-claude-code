@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+
+- **An update reloads the window by itself.** Once a newer version of Switchboard is installed, each VS Code window reloads itself to use it, so you no longer have to run **Developer: Reload Window**. A reload keeps the terminal tabs, and the Claude sessions in them keep running, even in the middle of a tool call.
+  - A window waits while a Claude session in its tabs is mid-turn (working, or waiting at a permission prompt or a question), while a debug session runs, or while a task runs. It reloads once it has stayed quiet for 5 seconds, after a notice that gives you 5 seconds to press **Not now**.
+  - A task or a debug session alone holds the reload back for 10 minutes at most, so a watch build or a dev server can't hold it for ever: after that you get the notice with a **Reload now** button instead.
+  - After the reload, a notice says which version it went from and to. If the window still runs the old version, it never tries again for that version: it says so, with a **Reload now** button.
+  - With `switchboard.update.reloadWindow` off, after **Not now**, or with `terminal.integrated.enablePersistentSessions` off (a reload would close every terminal), you get that notice instead.
+  - A first install still needs one **Developer: Reload Window**.
+
 ## 0.9.0
 
 - **Start next session takes over the old tab again after a tab gets a new shell.** VS Code can replace a tab's shell while it stays the same tab, for example around a Reload Window. Switchboard kept the old process number, so a session started in that tab looked as if it ran outside VS Code: Start next session left it open and used a new tab, a click on its card couldn't find its tab, and it wasn't kept for resuming. Switchboard now asks VS Code every time.

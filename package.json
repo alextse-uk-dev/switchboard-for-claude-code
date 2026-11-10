@@ -2,7 +2,7 @@
   "name": "switchboard-for-claude-code",
   "displayName": "Switchboard for Claude Code",
   "description": "A board of every Claude Code session on this machine: who needs you, who is waiting for your reply, who wants a new session, who is done, with each one's context and cost, and a to-do list of what Claude asked you to do. Click a session to jump to its terminal tab, and get a Mac alert, or a push on your phone, when one needs you while you are away.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "alextse-uk-dev",
   "license": "MIT",
   "repository": {
@@ -322,6 +322,11 @@
           "type": "boolean",
           "default": true,
           "description": "On opening VS Code, say when sessions closed along with it, with a button that resumes them all. The board lists them either way."
+        },
+        "switchboard.update.reloadWindow": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a newer version of Switchboard is installed, reload this window by itself, once no Claude session in its terminal tabs is mid-turn (working, or waiting at a permission prompt or a question). The sessions in its tabs keep running. Off: a notice with a Reload now button instead."
         },
         "switchboard.statusBar.enabled": {
           "type": "boolean",

@@ -58,6 +58,9 @@ It works with the sessions you already run: plain `claude` in VS Code terminal t
 - **New session (+)**: give it a name, a folder and a first task, then choose its model and effort. A pasted prompt with a slot for your answer is filled in the same way. A summary of all five comes last, and only **Start** opens the tab running `claude -n "<name>" --model <model> --effort <effort> "<task>"`.
   - The model list has Default, Opus, Sonnet, Haiku and Fable (Claude Code's aliases for its latest models), and room to type a full model id. The effort list goes from low to max.
   - Each list opens on your last choice. "Default" passes nothing, so your Claude Code settings decide; it says what they would pick, reading the project's `.claude/settings.json` before your own.
+- **An update reloads the window by itself.** When a newer version of Switchboard is installed, each window reloads itself to use it, so you don't have to run **Developer: Reload Window**. A reload keeps the terminal tabs, and the Claude sessions in them keep running.
+  - A window waits while a Claude session in its tabs is mid-turn (working, or waiting at a permission prompt or a question), while a debug session runs, or while a task runs. Once it has stayed quiet for 5 seconds, a notice says it reloads in 5 seconds, with a **Not now** button. After the reload, a notice says it worked.
+  - **Not now**, or `switchboard.update.reloadWindow` off, gives a notice with a **Reload now** button instead.
 
 ### Resume what VS Code closed
 
@@ -72,7 +75,8 @@ Quitting VS Code ends every Claude Code session in its terminal tabs. Switchboar
 5. A Mac alert's banner comes from the helper app (`mac/Switchboard.swift`, about 100 lines). The extension copies it into its storage folder, so it keeps one path and one notification permission across updates, and runs it with the banner's words and a `vscode://` link as arguments (no shell). A click starts the helper again if it has quit, and it opens the link: VS Code then brings forward the window that posted the banner, and Switchboard opens the tab. If the helper can't post, `osascript` shows the banner (its words passed as arguments, never as script). The sound is `afplay`.
 6. A phone push is one POST to the ntfy server (HTTPS, or plain HTTP to a server on your own network). The topic, and the access token if you gave one, are kept in VS Code's secret storage (the system keychain), never in settings, since settings can sync. On macOS, how long you have been away is read from `ioreg` (the system's idle time).
 7. "Seen" marks and the to-do list live in the extension's storage folder, which every VS Code window shares. Opening a session, clicking it or having its tab in front while the turn ends all count as seeing it.
-8. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
+8. An update is seen in the folder VS Code installs extensions into: a newer Switchboard folder with its `package.json` unpacked, and not marked for removal. Switchboard watches that folder and also looks once a minute. Before it reloads a window, it notes the versions in that window's own storage, so it can say afterwards that it worked, and never reloads twice for a version that didn't take.
+9. The board is a webview that draws with your theme's own colours. Its text is set as plain text, never as HTML, and its content security policy allows only its own script.
 
 Nothing leaves your machine, except a phone push once you set one up: then each push goes to the ntfy server you chose.
 
@@ -81,7 +85,7 @@ Nothing leaves your machine, except a phone push once you set one up: then each 
 Until it is on the Marketplace, install it from a `.vsix` file. Download the newest one from [Releases](https://github.com/alextse-uk-dev/switchboard-for-claude-code/releases/latest), then:
 
 ```sh
-code --install-extension switchboard-for-claude-code-0.9.0.vsix
+code --install-extension switchboard-for-claude-code-0.10.0.vsix
 ```
 
 Or build it yourself:
@@ -92,7 +96,9 @@ npm run package          # tests, the Mac helper, then switchboard-for-claude-co
 code --install-extension switchboard-for-claude-code-<version>.vsix
 ```
 
-Building the Mac helper needs the Xcode command line tools (`xcode-select --install`). Then run **Developer: Reload Window**.
+Building the Mac helper needs the Xcode command line tools (`xcode-select --install`).
+
+The first time you install it, run **Developer: Reload Window**. An update needs no reload from you: each window reloads itself once no session in it is mid-turn.
 
 Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings, so each terminal tab shows the session's title too.
 
@@ -122,6 +128,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 | `switchboard.newSession.chooseModel` | `true` | Ask for the model and effort before starting a session. |
 | `switchboard.startNext.sameTab` | `true` | Start next session ends the old session and starts the new one in its tab. Off: a tab of its own, and the old session stays open. |
 | `switchboard.closedSessions.notify` | `true` | On opening, say when sessions closed along with VS Code, with a button that resumes them all. The board lists them either way. |
+| `switchboard.update.reloadWindow` | `true` | After an update, reload each window by itself once no Claude session in its tabs is mid-turn. Off: a notice with a **Reload now** button instead. |
 | `switchboard.statusBar.enabled` | `true` | Show the counter. |
 | `switchboard.claudePath` | `""` | Absolute path to `claude` if it isn't on PATH or in `~/.local/bin`. It is read from user settings only, so a workspace can never choose what Switchboard runs. |
 
@@ -138,6 +145,7 @@ Tip: set `"terminal.integrated.tabs.title": "${sequence}"` in VS Code's settings
 - **Cost** is an estimate from the token counts Claude Code writes into each transcript, at the list prices built into this version (October 2026). On a Claude plan it is what the same tokens would cost on the API, not what you pay. A model it has no price for is left out, and the cost then shows a `+`.
 - **The to-do list** reads replies the way you'd skim them: only lines labelled for you (`Needs you:`, `**You:**`, `Over to you:`) and lists under such a heading count. A reply that asks in other words shows under "Waiting for your reply" instead.
 - **Phone push** goes through an ntfy server: ntfy.sh, or one you run yourself. On ntfy.sh, anyone who knows the topic can read its pushes, which is why a new topic is 16 random characters and is kept out of settings. A topic of your own with an access token is safer. Off macOS, "away" can only be told from VS Code's window focus, so a window left focused counts as "here".
+- **The reload after an update** keeps the terminal tabs and the Claude sessions running in them, but not what runs inside VS Code itself: a Claude session in an extension's panel ends, so does a debug session, and a running task may stop. That is why a window waits while a debug session or a task runs. A task or a debug session alone holds the reload back for 10 minutes at most, since a watch build or a dev server may never end; after that you get the notice with **Reload now** instead, while a Claude session mid-turn is waited for as long as it takes. A session that can't be tied to one of the window's tabs doesn't hold the reload back. With `terminal.integrated.enablePersistentSessions` off, a reload would close every terminal, so Switchboard only shows the notice. Quitting VS Code still ends every session.
 - macOS and Linux only for now (it uses `ps` to read the process tree).
 
 ## Development
