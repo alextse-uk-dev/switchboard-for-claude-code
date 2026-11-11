@@ -3,6 +3,7 @@ import { constants as fsc, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { countLines, emptyCost, sumTallies, type CostState, type Tally } from './core/cost';
+import { isListed } from './core/model';
 import { isShellCommand } from './core/recover';
 import { lineage, parseAgentsJson, parsePs, projectSlug, toSession, withFileFields } from './core/parse';
 import { readChunk, type Digest } from './core/transcript';
@@ -122,16 +123,20 @@ export class SessionSource {
     const live = [...files.values()].filter((s) => alive(s.pid));
     if (!sessions) {
       this.listed = undefined;
-      return live;
+      return live.filter((s) => isListed(s, { said: true, tab: true }));
     }
     // A list that parses but names none of the running sessions means its
     // format has changed under us; the status files are the better guess.
     if (live.length && !sessions.some((s) => files.has(s.pid))) {
       this.log('claude agents --json listed none of the running sessions, so the status files are read directly.');
-      return live;
+      return live.filter((s) => isListed(s, { said: true, tab: true }));
     }
     // A list reused from a moment ago may name a process that has since gone without a word.
-    return sessions.filter((s) => alive(s.pid)).map((s) => withFileFields(s, files.get(s.pid)));
+    // A program's sessions (`claude -p`, the Agent SDK) are no one's to answer.
+    return sessions
+      .filter((s) => alive(s.pid))
+      .map((s) => withFileFields(s, files.get(s.pid)))
+      .filter((s) => isListed(s, { said: true, tab: true }));
   }
 
   private async readStatusFiles(): Promise<Map<number, Session>> {

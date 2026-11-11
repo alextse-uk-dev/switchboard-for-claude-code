@@ -60,14 +60,22 @@ test("the status file's status and change time win over the CLI list", () => {
   assert.equal(withFileFields(cli, other), cli, 'a file for a reused pid is ignored');
 });
 
-test('displayTitle prefers a title the user set, then a chosen name, then the AI title', () => {
+test("displayTitle prefers this conversation's titles, the user's then Claude's, over the session's name", () => {
   const s: Session = toSession(cliInteractive)!;
   assert.equal(displayTitle(s, undefined), 'shop-22');
   const at = (v: string) => ({ v, at: 0 });
   assert.equal(displayTitle(s, { aiTitle: at('Fix checkout') }), 'Fix checkout');
-  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { aiTitle: at('Fix checkout') }), 'Checkout');
-  assert.equal(displayTitle({ ...s, nameSource: 'peer', name: 'Probe' }, { aiTitle: at('x') }), 'Probe');
+  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, {}), 'Checkout');
+  // After /clear: the name was given to the conversation before, and Claude has titled this one.
+  assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { aiTitle: at('Refund emails') }), 'Refund emails');
   assert.equal(displayTitle({ ...s, nameSource: 'user', name: 'Checkout' }, { customTitle: at('Renamed'), aiTitle: at('x') }), 'Renamed');
+});
+
+test('reads what started a session from its status file', () => {
+  const cli = toSession(cliInteractive)!;
+  assert.equal(cli.entrypoint, undefined);
+  const file = toSession({ ...cliInteractive, entrypoint: 'claude-vscode' })!;
+  assert.equal(withFileFields(cli, file).entrypoint, 'claude-vscode');
 });
 
 test('projectSlug matches how Claude Code names transcript folders', () => {

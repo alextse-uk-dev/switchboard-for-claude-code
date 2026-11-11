@@ -40,6 +40,7 @@ export function toSession(o: unknown): Session | undefined {
     waitingFor: status === 'waiting' ? str(r.waitingFor) : undefined,
     startedAt: num(r.startedAt) ?? 0,
     statusUpdatedAt: num(r.statusUpdatedAt),
+    entrypoint: str(r.entrypoint),
   };
 }
 
@@ -62,16 +63,21 @@ export function withFileFields(s: Session, file: Session | undefined): Session {
     ...s,
     attachId: s.attachId ?? (s.kind === 'background' ? file.attachId : undefined),
     nameSource: file.nameSource ?? s.nameSource,
+    entrypoint: file.entrypoint ?? s.entrypoint,
     ...(file.status !== 'unknown' && { status: file.status, waitingFor: file.waitingFor }),
     statusUpdatedAt: file.statusUpdatedAt,
   };
 }
 
-/** The name a person would recognise: a title they set, the name they chose, then Claude's own title. */
+/**
+ * The name a person would recognise: a title they set for this conversation,
+ * then Claude's own title for it, then the session's name. Claude writes its
+ * own title only to a conversation no one has named, so one found here means
+ * the session's name belongs to an earlier conversation: after /clear, a
+ * session started as "Fix the login" goes on to other work under that name.
+ */
 export function displayTitle(s: Session, d: Digest | undefined): string {
-  if (d?.customTitle) return d.customTitle.v;
-  if (s.nameSource === 'user' || s.nameSource === 'peer') return s.name;
-  return d?.aiTitle?.v ?? s.name;
+  return d?.customTitle?.v ?? d?.aiTitle?.v ?? s.name;
 }
 
 /** Claude Code's transcript folder name for a working directory. */

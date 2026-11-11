@@ -73,6 +73,22 @@ const GROUP_OF_OUTCOME: Record<Outcome['kind'], Group> = {
  * Which board section a session belongs to. An idle session goes where its
  * last turn's outcome says; one whose transcript can't be read is "idle".
  */
+/** A session in the Claude Code panel of an editor, not in a terminal. */
+export const isPanel = (s: Pick<Session, 'entrypoint'>): boolean => s.entrypoint === 'claude-vscode';
+
+/**
+ * Whether a session belongs on the board. Two kinds don't:
+ * - a program's session (`sdk-…`: a script, a `claude -p` run, the Agent
+ *   SDK), which no one answers;
+ * - an idle session that has said nothing yet and has no terminal tab here
+ *   or in another window, such as the one the Claude Code panel opens and
+ *   leaves waiting. It shows once it has a first reply.
+ */
+export function isListed(s: Pick<Session, 'entrypoint' | 'status'>, o: { said: boolean; tab: boolean }): boolean {
+  if (s.entrypoint?.startsWith('sdk')) return false;
+  return o.said || o.tab || s.status !== 'idle';
+}
+
 export function groupOf(s: Session, outcome: Outcome | undefined): Group {
   if (s.status === 'waiting') return 'needs';
   if (s.status === 'busy') return 'working';

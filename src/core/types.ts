@@ -19,6 +19,12 @@ export interface Session {
   startedAt: number;
   /** When `status` last changed, in ms since the epoch. */
   statusUpdatedAt?: number;
+  /**
+   * What started it, from its status file: "cli" in a terminal,
+   * "claude-vscode" for the Claude Code panel in the editor, "sdk-…" for a
+   * program (a script, a `claude -p` run, the Agent SDK).
+   */
+  entrypoint?: string;
 }
 
 /**

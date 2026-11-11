@@ -37,7 +37,7 @@ test('launchSummary lists everything the session starts with, and names the defa
   const d = launchSummary({ name: '', where: '/srv/app', task: ' ', defaults: { model: 'sonnet', effort: 'xhigh', from: "the project's .claude/settings.json" }, after: 'The old session stays open.' });
   assert.equal(
     d,
-    "Name: none (Claude names it)\nFolder: /srv/app\nModel: default (sonnet, from the project's .claude/settings.json)\nEffort: default (xhigh, from your Claude Code settings)\n\nFirst message: none (a blank prompt).\n\nThe old session stays open.",
+    "Name: none (Claude names it from the first message)\nFolder: /srv/app\nModel: default (sonnet, from the project's .claude/settings.json)\nEffort: default (xhigh, from your Claude Code settings)\n\nFirst message: none (a blank prompt).\n\nThe old session stays open.",
   );
   assert.match(launchSummary({ name: 'x', where: '~', task: 'Read NOTES.md', firstFrom: 'the kickoff prompt from "Parser"', defaults: {} }), /First message, the kickoff prompt from "Parser":\n\nRead NOTES.md/);
   assert.match(launchSummary({ name: 'x', where: '~', task: '', defaults: {} }), /Model: Claude Code's default\nEffort: Claude Code's default/);

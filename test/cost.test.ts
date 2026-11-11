@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { costOf, countLines, emptyCost, formatUsd, modelKey, modelName, sumTallies, usageOf } from '../src/core/cost';
+import { costOf, countLines, emptyCost, formatUsd, modelKey, modelName, priceKey, sumTallies, usageOf } from '../src/core/cost';
 
 const near = (a: number | undefined, b: number) => assert.ok(a !== undefined && Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
 const reply = (id: string, model: string, usage: object, extra: object = {}) =>
@@ -83,4 +83,23 @@ test('formatUsd', () => {
   assert.equal(formatUsd(0.001), '<$0.01');
   assert.equal(formatUsd(12.4), '$12.40');
   assert.equal(formatUsd(1234.5), '$1,235');
+});
+
+test('Fable 5.2 has its own price, and a model newer than the table is priced as its family\'s newest', () => {
+  const u = usageOf({ input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_input_tokens: 1_000_000 })!;
+  near(costOf('claude-fable-5-2', u), 8 + 40 + 0.2);
+  near(costOf('claude-fable-5-2[1m]', { ...u, fast: true }), 2 * (8 + 40 + 0.2));
+  near(costOf('claude-mythos-5-2', u), 8 + 40 + 0.2);
+  near(costOf('claude-sonnet-5-5', u), 2 + 10 + 0.1);
+  assert.equal(priceKey('claude-fable-5-2'), 'claude-fable-5-2');
+  assert.equal(priceKey('claude-fable-5-3'), 'claude-fable-5-2');
+  assert.equal(priceKey('claude-opus-6'), 'claude-opus-5-5');
+  assert.equal(priceKey('claude-opus-4-9'), undefined, 'an unknown older version is not guessed');
+  assert.equal(priceKey('claude-unknown-9'), undefined);
+  const c = emptyCost();
+  countLines([reply('a', 'claude-fable-5-3', { input_tokens: 1_000_000 }), reply('b', 'claude-fable-5-2', { input_tokens: 1_000_000 })].join('\n'), c);
+  near(c.tally.usd, 16);
+  assert.deepEqual(c.tally.estimated, { 'claude-fable-5-3': 'claude-fable-5-2' });
+  assert.deepEqual(c.tally.unpriced, {});
+  assert.deepEqual(sumTallies([c.tally]).estimated, { 'claude-fable-5-3': 'claude-fable-5-2' });
 });

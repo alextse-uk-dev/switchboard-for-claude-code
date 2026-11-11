@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0
+
+- **Cost counts Fable 5.2.** Its replies had no price, so a Fable 5.2 session showed only what its helper agents cost (often $0+). Fable 5.2 and Mythos 5.2 now cost $8 / $40 per million tokens ($0.20 cache reads, twice that in fast mode), and Sonnet 5.5's cache reads $0.10.
+  - A model newer than the price table, such as a future Fable 5.3, is priced as the newest of its family until the table catches up. Its cost shows with a `~` (`~$12.40`), and the tooltip says which price it used.
+- **Sessions that aren't yours to answer stay off the board.**
+  - The Claude Code panel in the editor starts a session as soon as it opens and leaves it idle, under a name like `my-repo-a0`. It showed as an idle session "outside VS Code". It now shows only once it has a reply, labelled **Claude Code panel**.
+  - A program's session (`claude -p`, the Agent SDK) never shows.
+- **The next session gets a name of its own.** Start next session passed the old session's name on, so a chain of sessions all wore the first one's name, whatever each was doing. The new session now starts without a name, and Claude titles it from its kickoff prompt.
+  - After `/clear`, when Claude has titled the new conversation, the board shows that title rather than the name the session was started with.
+
 ## 0.10.0
 
 - **An update reloads the window by itself.** Once a newer version of Switchboard is installed, each VS Code window reloads itself to use it, so you no longer have to run **Developer: Reload Window**. A reload keeps the terminal tabs, and the Claude sessions in them keep running, even in the middle of a tool call.

@@ -111,7 +111,7 @@ export function launchSummary(o: Summary): string {
     v ?? (fallback ? `default (${fallback}, from ${file ?? 'your Claude Code settings'})` : "Claude Code's default");
   const task = o.task.trim();
   const lines = [
-    `Name: ${o.name.trim() || 'none (Claude names it)'}`,
+    `Name: ${o.name.trim() || 'none (Claude names it from the first message)'}`,
     `Folder: ${o.where}`,
     `Model: ${orDefault(o.model, o.defaults.model, o.defaults.from)}`,
     `Effort: ${orDefault(o.effort, o.defaults.effort)}`,

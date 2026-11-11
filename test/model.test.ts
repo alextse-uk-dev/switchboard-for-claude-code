@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { counterText, formatAge, formatTokens, groupOf, isUnread, noLinks, popText, shouldPop, Tracker, type PopContext } from '../src/core/model';
+import { counterText, formatAge, formatTokens, groupOf, isListed, isUnread, noLinks, popText, shouldPop, Tracker, type PopContext } from '../src/core/model';
 import type { Group, Session, Status } from '../src/core/types';
 
 function session(status: Status, statusUpdatedAt?: number, extra: Partial<Session> = {}): Session {
@@ -160,4 +160,15 @@ test('pop-up text never carries a working link', () => {
   const t = popText(done(60_000), 'T', { kind: 'question', ask: 'Run it? [Yes](command:workbench.action.reloadWindow)' });
   assert.doesNotMatch(t, /\]\(/);
   assert.equal(noLinks('[a] (b)'), '[a]\u200b(b)');
+});
+
+test("isListed: the editor panel's silent session waits off the board; programs' sessions never show", () => {
+  const idle = { status: 'idle' as Status, entrypoint: 'claude-vscode' };
+  assert.equal(isListed(idle, { said: false, tab: false }), false, 'a panel session that has said nothing');
+  assert.equal(isListed(idle, { said: true, tab: false }), true, 'once it has a reply');
+  assert.equal(isListed({ ...idle, status: 'busy' }, { said: false, tab: false }), true, 'its first turn runs');
+  assert.equal(isListed({ status: 'idle', entrypoint: 'cli' }, { said: false, tab: true }), true, 'a blank session in a tab');
+  assert.equal(isListed({ status: 'idle' }, { said: false, tab: false }), false, 'no entrypoint known, nothing said, no tab');
+  assert.equal(isListed({ status: 'busy', entrypoint: 'sdk-cli' }, { said: true, tab: true }), false, 'a claude -p run');
+  assert.equal(isListed({ status: 'idle', entrypoint: 'sdk-ts' }, { said: true, tab: true }), false, 'the Agent SDK');
 });

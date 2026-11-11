@@ -25,10 +25,12 @@ const sonnet4 = { input: 3, output: 15, cacheRead: 0.3 };
 const sonnet4Long = { ...sonnet4, long: { above: 200_000, input: 6, output: 22.5, cacheRead: 0.6 } };
 
 /**
- * API list prices in October 2026. Cache writes cost 1.25× input for the
+ * API list prices in November 2026. Cache writes cost 1.25× input for the
  * 5-minute cache and 2× for the 1-hour cache, on every model.
  */
 const PRICES: Record<string, Price> = {
+  'claude-fable-5-2': { input: 8, output: 40, cacheRead: 0.2, fast: 2 },
+  'claude-mythos-5-2': { input: 8, output: 40, cacheRead: 0.2, fast: 2 },
   'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25 },
   'claude-mythos-5-1': { input: 10, output: 50, cacheRead: 0.25 },
   'claude-fable-5': { input: 10, output: 50, cacheRead: 1 },
@@ -41,7 +43,7 @@ const PRICES: Record<string, Price> = {
   'claude-opus-4-5': opus4,
   'claude-opus-4-1': { input: 15, output: 75, cacheRead: 1.5 },
   'claude-opus-4': { input: 15, output: 75, cacheRead: 1.5 },
-  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.1 },
   'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.2 },
   'claude-sonnet-4-6': sonnet4,
   'claude-sonnet-4-5': sonnet4Long,
@@ -106,9 +108,37 @@ export function usageOf(raw: unknown): Usage | undefined {
   };
 }
 
+/** A model's family and version, e.g. `claude-fable-5-2` → fable, [5, 2]. */
+function familyOf(key: string): { family: string; version: number[] } | undefined {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?$/.exec(key) ?? /^claude-(\d+)(?:-(\d+))?-([a-z]+)$/.exec(key);
+  if (!m) return undefined;
+  return /^\d/.test(m[1]) ? { family: m[3], version: [Number(m[1]), Number(m[2] ?? 0)] } : { family: m[1], version: [Number(m[2]), Number(m[3] ?? 0)] };
+}
+
+const newer = (a: number[], b: number[]) => a[0] - b[0] || a[1] - b[1];
+
+/**
+ * The price-table entry a model is priced by: its own, else, for a model
+ * newer than the table (`claude-fable-5-3`), the newest of its family, so a
+ * new release isn't counted as free. Undefined for anything else.
+ */
+export function priceKey(model: string): string | undefined {
+  const k = modelKey(model);
+  if (PRICES[k]) return k;
+  const f = familyOf(k);
+  if (!f) return undefined;
+  let best: { key: string; version: number[] } | undefined;
+  for (const key of Object.keys(PRICES)) {
+    const g = familyOf(key);
+    if (g?.family === f.family && (!best || newer(g.version, best.version) > 0)) best = { key, version: g.version };
+  }
+  return best && newer(f.version, best.version) > 0 ? best.key : undefined;
+}
+
 /** Dollars for one reply on one model, or undefined when the model has no known price. */
 export function costOf(model: string, u: Usage): number | undefined {
-  const p = PRICES[modelKey(model)];
+  const key = priceKey(model);
+  const p = key ? PRICES[key] : undefined;
   if (!p) return undefined;
   const prompt = u.input + u.cacheRead + u.write5m + u.write1h;
   const r: Rates = p.long && prompt > p.long.above ? p.long : p;
@@ -127,9 +157,11 @@ export interface Tally {
   cacheWrite: number;
   /** Replies on a model with no known price, by model id. */
   unpriced: Record<string, number>;
+  /** Models newer than the price table, and the entry each was priced as. */
+  estimated: Record<string, string>;
 }
 
-export const emptyTally = (): Tally => ({ usd: 0, replies: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, unpriced: {} });
+export const emptyTally = (): Tally => ({ usd: 0, replies: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, unpriced: {}, estimated: {} });
 
 /** A file's tally plus the reply ids already counted in it. */
 export interface CostState {
@@ -171,6 +203,8 @@ export function countLines(text: string, into: CostState): void {
     const usd = costOf(model, u);
     if (usd === undefined) t.unpriced[model] = (t.unpriced[model] ?? 0) + 1;
     else t.usd += usd;
+    const as = priceKey(model);
+    if (as && as !== modelKey(model)) t.estimated[model] = as;
   }
 }
 
@@ -185,6 +219,7 @@ export function sumTallies(tallies: readonly Tally[]): Tally {
     out.cacheRead += t.cacheRead;
     out.cacheWrite += t.cacheWrite;
     for (const [m, n] of Object.entries(t.unpriced)) out.unpriced[m] = (out.unpriced[m] ?? 0) + n;
+    Object.assign(out.estimated, t.estimated);
   }
   return out;
 }

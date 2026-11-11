@@ -187,7 +187,7 @@ test('toCard: cost, model and the whole reply', () => {
     message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Merged.\n\n## Details\n\n- The exporter writes CSV and JSON.\n- 18 tests were added.' }], usage: { input_tokens: 10 } },
   });
   const d = digestOf(long);
-  const tally = { usd: 12.4, replies: 30, input: 1, output: 2, cacheRead: 3, cacheWrite: 4, unpriced: {} };
+  const tally = { usd: 12.4, replies: 30, input: 1, output: 2, cacheRead: 3, cacheWrite: 4, unpriced: {}, estimated: {} };
   const base = { s, title: 'x', group: 'done' as const, outcome: outcomeOf(d, 150_000), digest: d, unread: false, where: 'here' as const, freshTokens: 150_000, home: '/home/sam' };
   const c = toCard({ ...base, tally, helpers: 2 });
   assert.equal(c.cost, '$12.40');
@@ -196,6 +196,9 @@ test('toCard: cost, model and the whole reply', () => {
   assert.equal(c.detail, 'Merged.');
   assert.match(c.reply ?? '', /18 tests were added/);
   assert.equal(toCard({ ...base, tally: { ...tally, unpriced: { 'odd-model': 1 } } }).cost, '$12.40+', 'a + when some replies have no price');
+  const est = toCard({ ...base, tally: { ...tally, estimated: { 'claude-fable-5-3': 'claude-fable-5-2' } } });
+  assert.equal(est.cost, '~$12.40', 'a ~ when a model newer than the price table was priced as its family');
+  assert.ok(est.costTip.some((l) => l.includes('Fable 5.3 is priced as Fable 5.2')));
   assert.equal(toCard({ ...base, tally, showCost: false }).cost, undefined);
   assert.equal(toCard({ ...base, tally: { ...tally, replies: 0 } }).cost, undefined);
   const short = digestOf(reply('**Merged.**'));

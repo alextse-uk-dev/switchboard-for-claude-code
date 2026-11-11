@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { formatUsd, modelName, type Tally } from './cost';
-import { formatTokens, waitingLabel } from './model';
+import { formatTokens, isPanel, waitingLabel } from './model';
 import { compactedSinceReply, contextTokens, gist, type Digest } from './transcript';
 import { keyOf, type Group, type Outcome, type Session } from './types';
 
@@ -104,6 +104,7 @@ function chipsOf(c: CardInput): string[] {
   if (c.s.kind === 'background') out.push('background');
   if (c.where === 'nested') out.push('inside another session');
   else if (c.where === 'elsewhere') out.push('other window');
+  else if (c.where === 'outside' && isPanel(c.s)) out.push('Claude Code panel');
   else if (c.where === 'outside' && c.s.kind !== 'background') out.push('outside VS Code');
   return out;
 }
@@ -138,7 +139,7 @@ export function toCard(c: CardInput): Card {
     freshTokens: c.freshTokens,
     compacted,
     prompt: c.outcome?.kind === 'handoff' && !!c.outcome.prompt,
-    cost: t ? `${formatUsd(t.usd)}${Object.keys(t.unpriced).length ? '+' : ''}` : undefined,
+    cost: t ? `${Object.keys(t.estimated).length ? '~' : ''}${formatUsd(t.usd)}${Object.keys(t.unpriced).length ? '+' : ''}` : undefined,
     costTip: t ? costTip(t, c.helpers ?? 0) : [],
     model: c.digest?.model ? modelName(c.digest.model.v) : undefined,
     effort: c.digest?.effort?.v,
@@ -175,6 +176,8 @@ function costTip(t: Tally, helpers: number): string[] {
   ];
   const unpriced = Object.entries(t.unpriced);
   if (unpriced.length) out.push(`Not counted (no known price): ${unpriced.map(([m, k]) => `${k} on ${m}`).join(', ')}.`);
+  const estimated = Object.entries(t.estimated);
+  if (estimated.length) out.push(`Estimated: ${estimated.map(([m, as]) => `${modelName(m)} is priced as ${modelName(as)}`).join(', ')} (no list price known yet).`);
   out.push('On a Claude plan this is what the same tokens would cost on the API, not what you pay.');
   return out;
 }

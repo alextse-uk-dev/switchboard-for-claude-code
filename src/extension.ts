@@ -10,7 +10,7 @@ import { blankContext, fillBlanks, findBlanks, type Blank } from './core/blanks'
 import { toCard, type Card, type Where } from './core/card';
 import { EFFORTS, inTabScript, isEffort, isModelId, launchCommand, launchSummary, MODEL_ALIASES, nextTab, nextTabLine, readDefaults, shq, tabPid, type Defaults } from './core/launch';
 import { modelName } from './core/cost';
-import { compareInGroup, counterText, groupOf, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
+import { compareInGroup, counterText, groupOf, isListed, isUnread, popText, shouldPop, Tracker, type SessionEvent } from './core/model';
 import { displayTitle } from './core/parse';
 import { awayMs, maskedTopic, newTopic, parseTopicUrl, pendingVerdict, pushMessage, pushVerdict, tokenProblem, type Pending, type PushTarget } from './core/push';
 import { canReuseTab, closedText, FORGET_AFTER_MS, forgets, offerClaim, reopenOrder, resumeCommand, resumeScript, shouldWrite, toClosedView, verdictOf, type Recoverable } from './core/recover';
@@ -768,12 +768,15 @@ class Board implements vscode.Disposable {
     const fresh = freshTokens();
     const showCost = config().get<boolean>('showCost', true);
     const home = os.homedir();
-    const rows = this.sessions.map((s): Row => {
+    const rows = this.sessions.flatMap((s): Row[] => {
       const key = keyOf(s);
-      const changedAt = this.tracker.changedAt(key);
+      const where = this.where(key);
       const digest = this.digests.get(s.sessionId);
+      // A session that has said nothing, with no tab anywhere (the editor panel's), waits off the board.
+      if (!isListed(s, { said: !!digest?.reply, tab: where === 'here' || where === 'elsewhere' })) return [];
+      const changedAt = this.tracker.changedAt(key);
       const outcome = s.status === 'idle' && digest ? this.outcome(digest, fresh) : undefined;
-      return {
+      return [{
         s,
         title: displayTitle(s, digest),
         group: groupOf(s, outcome),
@@ -781,8 +784,8 @@ class Board implements vscode.Disposable {
         digest,
         changedAt,
         unread: isUnread(s, changedAt, this.shared.seenAt(s.sessionId)),
-        where: this.where(key),
-      };
+        where,
+      }];
     });
     this.rows = new Map(rows.map((r) => [keyOf(r.s), r]));
 
@@ -1427,7 +1430,9 @@ class Board implements vscode.Disposable {
     if (task === undefined) return;
     const choice = asks ? await this.chooseModel(row.s.cwd, (n) => step(blanks + n), same) : same;
     if (!choice) return;
-    const l = { name: row.title, cwd: row.s.cwd, task, ...choice };
+    // No name: Claude titles the new session from its kickoff prompt. Passing
+    // the old title on made a chain of sessions all wear the first one's name.
+    const l = { name: '', cwd: row.s.cwd, task, ...choice };
     const earlier = row.outcome?.kind === 'handoff' && row.outcome.earlier;
     const filledIn = blanks ? `, with your answer${blanks > 1 ? 's' : ''} filled in` : '';
     const firstFrom = prompt ? `the kickoff prompt from ${earlier ? 'an earlier reply in ' : ''}"${row.title}"${filledIn}` : undefined;
