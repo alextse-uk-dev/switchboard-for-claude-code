@@ -95,6 +95,45 @@ button {
 }
 .pill.has-unread .dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 
+/* --- Projects -------------------------------------------------------- */
+
+.projects {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 7px;
+  margin-bottom: 1px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.proj {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.proj:hover { color: var(--fg); background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15)); }
+.proj.on {
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #0e639c);
+  border-color: transparent;
+}
+.proj .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj .n { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.proj .wants {
+  --accent: var(--vscode-charts-orange, #d18616);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 /* --- Sections -------------------------------------------------------- */
 
 .group { margin-top: 12px; }

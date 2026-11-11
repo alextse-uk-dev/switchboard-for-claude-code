@@ -6,9 +6,13 @@
   // @ts-ignore: provided by VS Code inside a webview.
   const vscode = acquireVsCodeApi();
   const board = /** @type {HTMLElement} */ (document.getElementById('board'));
-  /** Folded sections, cards whose whole reply is open, long details shown in full, and whether done to-dos show. */
-  /** @type {{ folded: Record<string, boolean>, open: Record<string, boolean>, unfolded: Record<string, boolean>, showDone: boolean }} */
-  const ui = Object.assign({ folded: {}, open: {}, unfolded: {}, showDone: false }, vscode.getState());
+  /**
+   * Folded sections, cards whose whole reply is open, long details shown in
+   * full, whether done to-dos show, and the project picked ('' for all). Each
+   * window's board keeps its own.
+   */
+  /** @type {{ folded: Record<string, boolean>, open: Record<string, boolean>, unfolded: Record<string, boolean>, showDone: boolean, project: string }} */
+  const ui = Object.assign({ folded: {}, open: {}, unfolded: {}, showDone: false, project: '' }, vscode.getState());
   /** @type {any} */
   let state;
   /** The add-a-to-do field is made once, so a redraw keeps what is being typed. */
@@ -196,7 +200,11 @@
     const focusName = /** @type {HTMLElement | null} */ (document.activeElement)?.closest?.('[data-focus]')?.getAttribute('data-focus');
     const typing = document.activeElement === addInput;
     const sel = [addInput.selectionStart, addInput.selectionEnd];
-    const cards = /** @type {any[]} */ (state.cards);
+    const all = /** @type {any[]} */ (state.cards);
+    const projects = projectsOf(all);
+    // A project whose last session has ended can't stay picked.
+    if (ui.project && !projects.some((p) => p.key === ui.project)) ui.project = '';
+    const cards = ui.project ? all.filter((c) => c.cwd === ui.project) : all;
     const todos = /** @type {any[]} */ (state.todos || []);
     const order = /** @type {string[]} */ (state.order);
     board.replaceChildren();
@@ -206,6 +214,7 @@
 
     const summary = el('nav', 'summary');
     summary.setAttribute('aria-label', 'Sessions by state');
+    if (projects.length > 1) summary.append(projectBar(projects, all.length));
     const closed = /** @type {any[]} */ (state.closed || []);
     const pills = [{ g: 'closed', n: closed.length, unread: 0, tip: `Closed with VS Code: ${closed.map((c) => c.title).join(', ')}` }, { g: 'todo', n: openTodos.length, unread: 0, tip: `To do: ${openTodos.length} open` }];
     for (const { g, mine } of groups) {
@@ -282,6 +291,59 @@
       checkFolds();
     });
   });
+
+  /** Cards that want you: a question, a hand-over, or a turn you haven't seen. @param {any} c */
+  const wantsYou = (c) => c.group === 'needs' || c.group === 'reply' || c.unread;
+
+  /**
+   * The projects the sessions run in, most sessions first. A project is a
+   * session's folder; two folders with the same name show their paths.
+   * @param {any[]} cards
+   */
+  function projectsOf(cards) {
+    /** @type {Map<string, { key: string, label: string, n: number, wants: number }>} */
+    const by = new Map();
+    for (const c of cards) {
+      const p = by.get(c.cwd) ?? { key: c.cwd, label: c.folder, n: 0, wants: 0 };
+      p.n++;
+      if (wantsYou(c)) p.wants++;
+      by.set(c.cwd, p);
+    }
+    const list = [...by.values()];
+    for (const p of list) if (list.some((q) => q !== p && q.label === p.label)) p.label = p.key;
+    return list.sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+  }
+
+  /**
+   * One button per project, and All. A project you aren't looking at that has
+   * something for you gets a dot, so filtering never hides a question.
+   * @param {{ key: string, label: string, n: number, wants: number }[]} projects @param {number} total
+   */
+  function projectBar(projects, total) {
+    const bar = el('div', 'projects');
+    bar.setAttribute('role', 'group');
+    bar.setAttribute('aria-label', 'Show the sessions of one project');
+    const pick = (/** @type {string} */ key) => {
+      ui.project = key;
+      vscode.setState(ui);
+      render();
+    };
+    const all = named(button('', `proj${ui.project ? '' : ' on'}`, () => pick(''), `Every project's sessions (${total})`), 'proj:');
+    all.append(el('span', '', 'All'), el('span', 'n', String(total)));
+    all.setAttribute('aria-pressed', String(!ui.project));
+    bar.append(all);
+    for (const p of projects) {
+      const on = ui.project === p.key;
+      const tip = [`${p.key}: ${p.n} session${p.n === 1 ? '' : 's'}`];
+      if (p.wants) tip.push(`${p.wants} for you`);
+      const b = named(button('', `proj${on ? ' on' : ''}`, () => pick(on ? '' : p.key), tip.join(', ')), `proj:${p.key}`);
+      b.append(el('span', 'name', p.label), el('span', 'n', String(p.n)));
+      if (p.wants && !on) b.append(el('span', 'wants'));
+      b.setAttribute('aria-pressed', String(on));
+      bar.append(b);
+    }
+    return bar;
+  }
 
   /** @template {HTMLElement} T @param {T} node @param {string} name @returns {T} */
   function named(node, name) {

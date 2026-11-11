@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0
+
+- **Pick a project.** When sessions run in more than one folder, a row of buttons at the top of the board reads **All 6 · api 2 · cli 2 · docs 1**. Pick one to see only its sessions; pick it again, or **All**, to see every one. Each window remembers its own pick.
+  - A project you aren't looking at that has something for you (a question, a prompt waiting, a turn you haven't seen) gets an orange dot, and the activity bar badge still counts every project, so a filter never hides a question.
+  - Two folders with the same name show their paths. To-dos and closed sessions are not filtered.
+
 ## 0.11.0
 
 - **Cost counts Fable 5.2.** Its replies had no price, so a Fable 5.2 session showed only what its helper agents cost (often $0+). Fable 5.2 and Mythos 5.2 now cost $8 / $40 per million tokens ($0.20 cache reads, twice that in fast mode), and Sonnet 5.5's cache reads $0.10.
